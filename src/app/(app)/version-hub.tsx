@@ -225,6 +225,10 @@ function BuildsTab({ publishedMap, onPublished, onDeleteVersion }: {
   const [deleteBuild, setDeleteBuild] = useState<EasBuild | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // GitHub Actions 构建（从 app_versions 表读取 Supabase Storage APK）
+  const [ghBuilds, setGhBuilds]   = useState<AppVersion[]>([]);
+  const [ghLoading, setGhLoading] = useState(false);
+
   // 加载已隐藏的构建 ID
   useEffect(() => {
     (async () => {
@@ -233,6 +237,18 @@ function BuildsTab({ publishedMap, onPublished, onDeleteVersion }: {
         if (raw) setHiddenIds(new Set(JSON.parse(raw)));
       } catch { /* ignore */ }
     })();
+  }, []);
+
+  const fetchGhBuilds = useCallback(async () => {
+    setGhLoading(true);
+    const { data } = await supabase
+      .from('app_versions')
+      .select('*')
+      .like('apk_url', '%apk-releases%')   // 只取 Supabase Storage 上传的（GitHub Actions）
+      .order('version_code', { ascending: false })
+      .limit(10);
+    setGhBuilds(data ?? []);
+    setGhLoading(false);
   }, []);
 
   const fetchBuilds = useCallback(async () => {
@@ -246,7 +262,7 @@ function BuildsTab({ publishedMap, onPublished, onDeleteVersion }: {
     finally { setLoading(false); }
   }, []);
 
-  useFocusEffect(useCallback(() => { (async () => { await fetchBuilds(); })(); }, [fetchBuilds]));
+  useFocusEffect(useCallback(() => { (async () => { await Promise.all([fetchBuilds(), fetchGhBuilds()]); })(); }, [fetchBuilds, fetchGhBuilds]));
 
   // 删除/取消构建
   const confirmDeleteBuild = useCallback(async () => {
@@ -277,7 +293,101 @@ function BuildsTab({ publishedMap, onPublished, onDeleteVersion }: {
     <>
     <ScrollView contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={{ padding: 14, gap: 10, paddingBottom: 60 }}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchBuilds} tintColor="#FBBF24" />}>
+      refreshControl={<RefreshControl refreshing={loading || ghLoading} onRefresh={() => { void fetchBuilds(); void fetchGhBuilds(); }} tintColor="#FBBF24" />}>
+
+      {/* ── GitHub Actions 构建区 ───────────────────────── */}
+      <View style={{ gap: 6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 2 }}>
+          <View style={{ width: 3, height: 14, borderRadius: 2, backgroundColor: '#34D399' }} />
+          <Text style={{ color: '#34D399', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 }}>
+            GITHUB ACTIONS 构建
+          </Text>
+          {ghLoading && <ActivityIndicator size="small" color="#34D399" style={{ transform: [{ scale: 0.7 }] } as never} />}
+        </View>
+
+        {!ghLoading && ghBuilds.length === 0 && (
+          <View style={{ backgroundColor: 'rgba(52,211,153,0.05)', borderRadius: 11, padding: 12,
+            borderWidth: 1, borderColor: 'rgba(52,211,153,0.15)', alignItems: 'center', gap: 6 }}>
+            <Text style={{ color: 'rgba(52,211,153,0.4)', fontSize: 12 }}>暂无 GitHub Actions 构建记录</Text>
+          </View>
+        )}
+
+        {ghBuilds.map((item, idx) => (
+          <View key={item.id} style={{ borderRadius: 13, overflow: 'hidden',
+            borderWidth: 1, borderColor: idx === 0 ? 'rgba(52,211,153,0.35)' : 'rgba(52,211,153,0.12)' }}>
+            <LinearGradient
+              colors={idx === 0 ? ['rgba(16,185,129,0.12)', 'rgba(5,46,22,0.45)'] : ['rgba(255,255,255,0.03)', 'rgba(0,0,0,0.15)']}
+              style={{ padding: 12, gap: 7 }}>
+              {/* 顶行 */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                {idx === 0 && (
+                  <View style={{ backgroundColor: 'rgba(52,211,153,0.2)', borderRadius: 5,
+                    paddingHorizontal: 6, paddingVertical: 1 }}>
+                    <Text style={{ color: '#34D399', fontSize: 9, fontWeight: '800' }}>最新</Text>
+                  </View>
+                )}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4,
+                  backgroundColor: 'rgba(52,211,153,0.1)', borderRadius: 6,
+                  paddingHorizontal: 7, paddingVertical: 2,
+                  borderWidth: 1, borderColor: 'rgba(52,211,153,0.25)' }}>
+                  <CheckCircle2 size={11} color="#34D399" />
+                  <Text style={{ color: '#34D399', fontSize: 10, fontWeight: '800' }}>构建成功</Text>
+                </View>
+                <View style={{ flex: 1 }} />
+                <Text style={{ color: 'rgba(255,255,255,0.25)', fontSize: 9 }}>
+                  {timeAgo(item.created_at)}
+                </Text>
+              </View>
+              {/* 版本 */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+                <Text style={{ color: '#F1F5F9', fontSize: 15, fontWeight: '800' }}>v{item.version_name}</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.25)', fontSize: 10 }}>·</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }}>#{item.version_code}</Text>
+                <View style={{ backgroundColor: 'rgba(52,211,153,0.12)', borderRadius: 4,
+                  paddingHorizontal: 5, paddingVertical: 1 }}>
+                  <Text style={{ color: '#6EE7B7', fontSize: 9, fontWeight: '700' }}>GitHub Actions</Text>
+                </View>
+              </View>
+              {/* 更新内容 */}
+              {!!item.release_notes && (
+                <View style={{ flexDirection: 'row', gap: 5, alignItems: 'flex-start' }}>
+                  <GitCommit size={10} color="rgba(255,255,255,0.25)" style={{ marginTop: 1 } as never} />
+                  <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, flex: 1 }} numberOfLines={1}>
+                    {item.release_notes}
+                  </Text>
+                </View>
+              )}
+              {/* 操作按钮 */}
+              <View style={{ flexDirection: 'row', gap: 7, marginTop: 2 }}>
+                <Pressable onPress={() => Linking.openURL(item.apk_url)}
+                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
+                    backgroundColor: 'rgba(52,211,153,0.12)', borderRadius: 9, paddingVertical: 9,
+                    borderWidth: 1, borderColor: 'rgba(52,211,153,0.28)' }}>
+                  <Download size={13} color="#34D399" />
+                  <Text style={{ color: '#34D399', fontSize: 12, fontWeight: '700' }}>下载 APK</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => onDeleteVersion(String(item.id), `v${item.version_name}`, () => setGhBuilds(prev => prev.filter(b => b.id !== item.id)))}
+                  style={{ width: 38, alignItems: 'center', justifyContent: 'center',
+                    backgroundColor: 'rgba(239,68,68,0.07)', borderRadius: 9,
+                    borderWidth: 1, borderColor: 'rgba(239,68,68,0.18)' }}>
+                  <Trash2 size={14} color="#EF4444" />
+                </Pressable>
+              </View>
+            </LinearGradient>
+          </View>
+        ))}
+      </View>
+
+      {/* ── EAS 构建分割线 ──────────────────────────────── */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+        <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+          <View style={{ width: 3, height: 14, borderRadius: 2, backgroundColor: '#A5B4FC' }} />
+          <Text style={{ color: '#64748B', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>EAS 历史构建</Text>
+        </View>
+        <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+      </View>
 
       {hasActive && (
         <View style={{ backgroundColor: 'rgba(251,191,36,0.12)', borderRadius: 12, padding: 11,
