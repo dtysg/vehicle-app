@@ -118,18 +118,36 @@ jobs:
           VERSION_NAME="${{ steps.version.outputs.name }}"
           STORAGE_PATH="apk/vehicle-app-${VERSION_NAME}.apk"
 
-          RESP=$(curl -s -w "\n%{http_code}" -X POST \
-            "${{ secrets.SUPABASE_URL }}/storage/v1/object/apk-releases/${STORAGE_PATH}" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
-            -H "Content-Type: application/vnd.android.package-archive" \
-            --data-binary @"$APK_PATH")
-
-          HTTP_CODE=$(echo "$RESP" | tail -1)
-          echo "上传状态: $HTTP_CODE"
-          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ]; then
-            echo "❌ 上传失败: $(echo "$RESP" | head -1)"
+          # 确认 APK 存在并打印大小
+          if [ ! -f "$APK_PATH" ]; then
+            echo "❌ APK 文件不存在: $APK_PATH"
+            ls android/app/build/outputs/apk/release/ || true
             exit 1
           fi
+          APK_SIZE=$(du -sh "$APK_PATH" | cut -f1)
+          echo "📦 APK 大小: ${APK_SIZE}，路径: ${APK_PATH}"
+
+          # 上传（最多重试 3 次）
+          MAX_RETRY=3
+          for i in $(seq 1 $MAX_RETRY); do
+            echo "🔄 上传尝试 $i/$MAX_RETRY ..."
+            RESP=$(curl -s -w "\n%{http_code}" --max-time 300 -X POST \
+              "${{ secrets.SUPABASE_URL }}/storage/v1/object/apk-releases/${STORAGE_PATH}" \
+              -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+              -H "Content-Type: application/vnd.android.package-archive" \
+              --data-binary @"$APK_PATH")
+            HTTP_CODE=$(echo "$RESP" | tail -1)
+            BODY=$(echo "$RESP" | head -1)
+            echo "上传状态: $HTTP_CODE  响应: $BODY"
+            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+              break
+            fi
+            if [ $i -eq $MAX_RETRY ]; then
+              echo "❌ 上传失败（重试 $MAX_RETRY 次后仍失败）"
+              exit 1
+            fi
+            sleep 10
+          done
 
           APK_URL="${{ secrets.SUPABASE_URL }}/storage/v1/object/public/apk-releases/${STORAGE_PATH}"
           echo "apk_url=${APK_URL}" >> $GITHUB_OUTPUT
