@@ -149,7 +149,7 @@ jobs:
           APK_SIZE=$(du -sh "$APK_PATH" | cut -f1)
           echo "📦 APK 大小: ${APK_SIZE}，路径: ${APK_PATH}"
 
-          # 上传（最多重试 3 次）
+          # 上传（最多重试 3 次，upsert=true 覆盖同名文件）
           MAX_RETRY=3
           for i in $(seq 1 $MAX_RETRY); do
             echo "🔄 上传尝试 $i/$MAX_RETRY ..."
@@ -157,6 +157,7 @@ jobs:
               "${{ secrets.SUPABASE_URL }}/storage/v1/object/apk-releases/${STORAGE_PATH}" \
               -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
               -H "Content-Type: application/vnd.android.package-archive" \
+              -H "x-upsert: true" \
               --data-binary @"$APK_PATH")
             HTTP_CODE=$(echo "$RESP" | tail -1)
             BODY=$(echo "$RESP" | head -1)
@@ -187,7 +188,7 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Content-Type: application/json" \
-            -H "Prefer: return=minimal" \
+            -H "Prefer: resolution=merge-duplicates,return=minimal" \
             -d "{
               \"version_name\": \"${{ steps.version.outputs.name }}\",
               \"version_code\": ${{ steps.version.outputs.code }},
