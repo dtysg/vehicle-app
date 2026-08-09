@@ -1,0 +1,1 @@
+ALTER TABLE oil_price_history ADD COLUMN IF NOT EXISTS crude_brent numeric;

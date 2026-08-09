@@ -1,0 +1,1 @@
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS temp_admin_expires_at TIMESTAMPTZ DEFAULT NULL;

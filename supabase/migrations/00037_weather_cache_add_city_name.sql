@@ -1,0 +1,1 @@
+ALTER TABLE weather_cache ADD COLUMN IF NOT EXISTS city_name text NOT NULL DEFAULT '';

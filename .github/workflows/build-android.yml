@@ -1,0 +1,178 @@
+name: 🤖 构建 Android APK
+
+on:
+  # 手动触发（在 GitHub App 里点按钮即可）
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: '更新说明（选填）'
+        required: false
+        default: ''
+  # 也可以推代码时自动触发
+  push:
+    branches: [ master ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+jobs:
+  build:
+    name: 构建 APK 并发布
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # ── 1. 检出代码 ────────────────────────────────────
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+
+      # ── 2. 环境：Java 17 ───────────────────────────────
+      - name: ☕ 配置 Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # ── 3. 环境：Node.js + pnpm ────────────────────────
+      - name: 🟢 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      # ── 4. 安装依赖（带缓存）────────────────────────────
+      - name: 📂 获取 pnpm store 路径
+        id: pnpm-cache
+        run: echo "store=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: 🗂️ 缓存 node_modules
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: 📦 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # ── 5. 写 .env（注入 Supabase 配置）───────────────
+      - name: 🔑 写入环境变量
+        run: |
+          echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> .env
+          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
+          echo "EXPO_PUBLIC_APP_ID=app-d6jn0ph0piwx" >> .env
+
+      # ── 6. Expo Prebuild（生成 android 原生工程）───────
+      - name: 🛠️ Expo Prebuild
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: pnpm exec expo prebuild --platform android --clean
+
+      # ── 7. 写入 keystore 文件 ──────────────────────────
+      - name: 🔐 恢复 keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/vehicle-app.keystore
+
+      # ── 8. 配置 Gradle 签名 ────────────────────────────
+      - name: ⚙️ 配置签名参数
+        run: |
+          cat >> android/app/build.gradle << 'EOF'
+
+          android.signingConfigs.release {
+              storeFile file('vehicle-app.keystore')
+              storePassword 'vehicleapp2024'
+              keyAlias 'vehicle-app'
+              keyPassword 'vehicleapp2024'
+          }
+          android.buildTypes.release {
+              signingConfig android.signingConfigs.release
+          }
+          EOF
+
+      # ── 9. Gradle 构建 Release APK ─────────────────────
+      - name: 🔨 Gradle 构建 APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=512m"
+
+      # ── 10. 读取版本号 ─────────────────────────────────
+      - name: 📋 读取版本信息
+        id: version
+        run: |
+          VERSION=$(node -e "const a=require('./app.json'); console.log(a.expo.version)")
+          PATCH=$(echo $VERSION | awk -F. '{print $3}')
+          NEW_CODE=$((PATCH + 1))
+          echo "name=1.0.${NEW_CODE}" >> $GITHUB_OUTPUT
+          echo "code=${NEW_CODE}" >> $GITHUB_OUTPUT
+          echo "APK 版本: 1.0.${NEW_CODE} (code: ${NEW_CODE})"
+
+      # ── 11. 上传 APK 到 Supabase Storage ──────────────
+      - name: ☁️ 上传 APK 到 Supabase
+        id: upload
+        run: |
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+          VERSION_NAME="${{ steps.version.outputs.name }}"
+          STORAGE_PATH="apk/vehicle-app-${VERSION_NAME}.apk"
+
+          RESP=$(curl -s -w "\n%{http_code}" -X POST \
+            "${{ secrets.SUPABASE_URL }}/storage/v1/object/apk-releases/${STORAGE_PATH}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/vnd.android.package-archive" \
+            --data-binary @"$APK_PATH")
+
+          HTTP_CODE=$(echo "$RESP" | tail -1)
+          echo "上传状态: $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ]; then
+            echo "❌ 上传失败: $(echo "$RESP" | head -1)"
+            exit 1
+          fi
+
+          APK_URL="${{ secrets.SUPABASE_URL }}/storage/v1/object/public/apk-releases/${STORAGE_PATH}"
+          echo "apk_url=${APK_URL}" >> $GITHUB_OUTPUT
+          echo "✅ APK 上传成功: ${APK_URL}"
+
+      # ── 12. 写入 app_versions 表 ──────────────────────
+      - name: 📝 写入版本记录
+        run: |
+          NOTES="${{ github.event.inputs.release_notes }}"
+          if [ -z "$NOTES" ]; then
+            NOTES="$(git log -1 --pretty=%s)"
+          fi
+
+          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/app_versions" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            -d "{
+              \"version_name\": \"${{ steps.version.outputs.name }}\",
+              \"version_code\": ${{ steps.version.outputs.code }},
+              \"apk_url\": \"${{ steps.upload.outputs.apk_url }}\",
+              \"release_notes\": \"${NOTES}\",
+              \"is_force\": false
+            }"
+          echo "✅ 版本记录写入完成"
+
+      # ── 13. 保存 APK 产物 ──────────────────────────────
+      - name: 💾 保存 APK 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: vehicle-app-${{ steps.version.outputs.name }}.apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+      # ── 14. 构建完成通知 ───────────────────────────────
+      - name: 🎉 构建完成
+        run: |
+          echo "================================================"
+          echo "🎉 APK 构建发布成功！"
+          echo "   版本：${{ steps.version.outputs.name }}"
+          echo "   下载：${{ steps.upload.outputs.apk_url }}"
+          echo "   App 内更新弹窗将在下次启动后自动弹出"
+          echo "================================================"

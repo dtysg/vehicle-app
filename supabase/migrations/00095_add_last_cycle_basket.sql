@@ -1,0 +1,1 @@
+ALTER TABLE oil_prices ADD COLUMN IF NOT EXISTS crude_last_cycle_basket numeric;
