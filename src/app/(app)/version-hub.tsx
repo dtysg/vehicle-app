@@ -4,7 +4,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, Pressable, ScrollView, FlatList,
-  ActivityIndicator, TextInput, Linking, RefreshControl,
+  ActivityIndicator, TextInput, Linking, RefreshControl, Platform,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
@@ -14,10 +14,10 @@ import {
   ArrowLeft, Hammer, PackageOpen, ListChecks,
   CheckCircle2, XCircle,
   Download, AlertTriangle, GitCommit, ChevronRight, Ban,
-  Trash2, ShieldAlert, Calendar, Hash, FileText, AlertCircle,
+  Trash2, ShieldAlert, Calendar, Hash, FileText, AlertCircle, RefreshCw,
 } from 'lucide-react-native';
 import { supabase } from '@/client/supabase';
-import { CURRENT_VERSION_CODE } from '@/hooks/useApkUpdate';
+import { CURRENT_VERSION_CODE, useApkUpdate } from '@/hooks/useApkUpdate';
 
 const HIDDEN_BUILDS_KEY = '@version_hub:hidden_builds';
 
@@ -618,6 +618,14 @@ function VersionsTab({ versions, loading, error, onDelete }: {
 export default function VersionHubScreen() {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('builds');
+  const update = useApkUpdate(false);
+  const [checking, setChecking] = useState(false);
+
+  const handleCheckNow = async () => {
+    setChecking(true);
+    await update.checkNow();
+    setTimeout(() => setChecking(false), 1500);
+  };
 
   // 已发布版本（Tab2 + Tab1 共享）
   const [versions, setVersions] = useState<AppVersion[]>([]);
@@ -685,6 +693,31 @@ export default function VersionHubScreen() {
             <Text style={{ color: '#60A5FA', fontSize: 11, fontWeight: '700' }}>{versions.length} 个版本</Text>
           </View>
         )}
+      </View>
+
+      {/* 当前版本 + 检查更新 */}
+      <View style={{ marginHorizontal: 16, marginBottom: 10, flexDirection: 'row',
+        alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.04)',
+        borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' }}>
+        <Text style={{ color: '#475569', fontSize: 12, flex: 1 }}>
+          当前版本：<Text style={{ color: '#94A3B8', fontWeight: '700' }}>
+            {CURRENT_VERSION_CODE}
+          </Text>
+          {Platform.OS !== 'android' && (
+            <Text style={{ color: '#475569' }}>（仅 Android 检测更新）</Text>
+          )}
+        </Text>
+        <Pressable onPress={handleCheckNow} disabled={checking}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 4,
+            backgroundColor: 'rgba(59,130,246,0.12)', borderRadius: 7,
+            paddingHorizontal: 10, paddingVertical: 5,
+            borderWidth: 1, borderColor: 'rgba(96,165,250,0.25)', opacity: checking ? 0.6 : 1 }}>
+          <RefreshCw size={11} color="#60A5FA" />
+          <Text style={{ color: '#60A5FA', fontSize: 11, fontWeight: '700' }}>
+            {checking ? '检测中…' : '立即检查'}
+          </Text>
+        </Pressable>
       </View>
 
       {/* Tab 切换器 */}
