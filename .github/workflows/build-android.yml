@@ -57,7 +57,7 @@ jobs:
           restore-keys: pnpm-${{ runner.os }}-
 
       - name: 📦 安装依赖
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       # ── 5. 写 .env（注入 Supabase 配置）───────────────
       - name: 🔑 写入环境变量
