@@ -113,5 +113,12 @@
         "@expo/log-box"
       ]
     }
+  },
+  "pnpm": {
+    "overrides": {
+      "expo-audio": "55.0.6",
+      "expo-video": "55.0.5",
+      "metro-core": "0.83.7"
+    }
   }
 }
