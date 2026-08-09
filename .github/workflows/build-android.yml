@@ -77,22 +77,6 @@ jobs:
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/vehicle-app.keystore
 
-      # ── 8. 配置 Gradle 签名 ────────────────────────────
-      - name: ⚙️ 配置签名参数
-        run: |
-          cat >> android/app/build.gradle << 'EOF'
-
-          android.signingConfigs.release {
-              storeFile file('vehicle-app.keystore')
-              storePassword 'vehicleapp2024'
-              keyAlias 'vehicle-app'
-              keyPassword 'vehicleapp2024'
-          }
-          android.buildTypes.release {
-              signingConfig android.signingConfigs.release
-          }
-          EOF
-
       # ── 9. Gradle 构建 Release APK ─────────────────────
       - name: 🔨 Gradle 构建 APK
         run: |
