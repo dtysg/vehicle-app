@@ -19,7 +19,9 @@ jobs:
   build:
     name: 构建 APK 并发布
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
+    permissions:
+      contents: write   # 允许 push 版本号回 GitHub
 
     steps:
       # ── 1. 检出代码 ────────────────────────────────────
@@ -76,6 +78,31 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
+      # ── 5.7 计算新版本号并更新 app.json（必须在 prebuild 前）──
+      - name: 📋 计算并写入版本号
+        id: version
+        run: |
+          VERSION=$(node -e "const a=require('./app.json'); console.log(a.expo.version)")
+          MAJOR=$(echo $VERSION | awk -F. '{print $1}')
+          MINOR=$(echo $VERSION | awk -F. '{print $2}')
+          PATCH=$(echo $VERSION | awk -F. '{print $3}')
+          NEW_CODE=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${NEW_CODE}"
+          echo "name=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "code=${NEW_CODE}"    >> $GITHUB_OUTPUT
+          echo "APK 版本: ${NEW_VERSION} (code: ${NEW_CODE})"
+
+          # 把新版本写入 app.json，让 APK 内嵌正确版本号
+          node -e "
+            const fs = require('fs');
+            const a  = JSON.parse(fs.readFileSync('app.json'));
+            a.expo.version = '${NEW_VERSION}';
+            a.expo.android = a.expo.android || {};
+            a.expo.android.versionCode = ${NEW_CODE};
+            fs.writeFileSync('app.json', JSON.stringify(a, null, 2) + '\n');
+            console.log('✅ app.json 已更新 →', '${NEW_VERSION}');
+          "
+
       # ── 6. Expo Prebuild（生成 android 原生工程）───────
       - name: 🛠️ Expo Prebuild
         env:
@@ -99,16 +126,11 @@ jobs:
             -x lintVitalRelease \
             -x lint
 
-      # ── 10. 读取版本号 ─────────────────────────────────
+      # ── 10. 读取版本号（已在步骤 5.7 计算，这里只做复核日志）──
       - name: 📋 读取版本信息
-        id: version
+        id: version_check
         run: |
-          VERSION=$(node -e "const a=require('./app.json'); console.log(a.expo.version)")
-          PATCH=$(echo $VERSION | awk -F. '{print $3}')
-          NEW_CODE=$((PATCH + 1))
-          echo "name=1.0.${NEW_CODE}" >> $GITHUB_OUTPUT
-          echo "code=${NEW_CODE}" >> $GITHUB_OUTPUT
-          echo "APK 版本: 1.0.${NEW_CODE} (code: ${NEW_CODE})"
+          echo "✅ 版本确认: ${{ steps.version.outputs.name }} (code: ${{ steps.version.outputs.code }})"
 
       # ── 11. 上传 APK 到 Supabase Storage ──────────────
       - name: ☁️ 上传 APK 到 Supabase
@@ -192,3 +214,15 @@ jobs:
           echo "   下载：${{ steps.upload.outputs.apk_url }}"
           echo "   App 内更新弹窗将在下次启动后自动弹出"
           echo "================================================"
+
+      # ── 15. 把版本号回写到 GitHub（下次构建用）──────────
+      - name: 🔖 回写版本号到 GitHub
+        if: success()
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          git add app.json
+          git diff --staged --quiet || \
+            git commit -m "ci: bump version to ${{ steps.version.outputs.name }} [skip ci]" && \
+            git push
+          echo "✅ app.json 版本已回写: ${{ steps.version.outputs.name }}"
