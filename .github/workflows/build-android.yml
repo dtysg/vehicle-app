@@ -116,6 +116,12 @@ jobs:
 
       # ── 9. Gradle 构建 Release APK ─────────────────────
       - name: 🔨 Gradle 构建 APK
+        # 必须在此步骤注入 env，Gradle 调用 Metro 打包时才能读到 EXPO_PUBLIC_* 变量
+        # 若只写 .env 文件，Gradle/Metro 不会自动读取，导致 Supabase 用 placeholder
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_APP_ID: app-d6jn0ph0piwx
         run: |
           cd android
           chmod +x gradlew
