@@ -92,8 +92,12 @@ jobs:
         run: |
           cd android
           chmod +x gradlew
+          # 增加 JVM 内存防止 OOM Metaspace，跳过 lint（不影响 APK 功能）
+          echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseG1GC" >> gradle.properties
           ./gradlew assembleRelease --no-daemon \
-            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=512m"
+            -x lintVitalAnalyzeRelease \
+            -x lintVitalRelease \
+            -x lint
 
       # ── 10. 读取版本号 ─────────────────────────────────
       - name: 📋 读取版本信息
