@@ -155,11 +155,11 @@ jobs:
           APK_SIZE=$(du -sh "$APK_PATH" | cut -f1)
           echo "📦 APK 大小: ${APK_SIZE}，路径: ${APK_PATH}"
 
-          # 上传（最多重试 3 次，upsert=true 覆盖同名文件）
+          # 上传（最多重试 3 次，PUT 方法覆盖同名文件，避免 409 Duplicate）
           MAX_RETRY=3
           for i in $(seq 1 $MAX_RETRY); do
             echo "🔄 上传尝试 $i/$MAX_RETRY ..."
-            RESP=$(curl -s -w "\n%{http_code}" --max-time 300 -X POST \
+            RESP=$(curl -s -w "\n%{http_code}" --max-time 300 -X PUT \
               "${{ secrets.SUPABASE_URL }}/storage/v1/object/apk-releases/${STORAGE_PATH}" \
               -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
               -H "Content-Type: application/vnd.android.package-archive" \
