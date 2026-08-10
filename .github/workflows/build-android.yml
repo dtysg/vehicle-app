@@ -242,7 +242,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name  "github-actions[bot]"
           git add app.json
-          git diff --staged --quiet || \
-            git commit -m "ci: bump version to ${{ steps.version.outputs.name }} [skip ci]" && \
-            git push
-          echo "✅ app.json 版本已回写: ${{ steps.version.outputs.name }}"
+          if git diff --staged --quiet; then
+            echo "⚠️ app.json 无变化，跳过回写"
+          else
+            git commit -m "ci: bump version to ${{ steps.version.outputs.name }} [skip ci]"
+            # pull --rebase 合并远端新提交（避免并发推送冲突），再 push
+            git pull --rebase origin main
+            git push origin main
+            echo "✅ app.json 版本已回写: ${{ steps.version.outputs.name }}"
+          fi
