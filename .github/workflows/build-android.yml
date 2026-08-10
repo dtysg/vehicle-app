@@ -171,17 +171,15 @@ jobs:
           APK_SIZE=$(du -sh "$APK_PATH" | cut -f1)
           echo "📦 APK 大小: ${APK_SIZE}，路径: ${APK_PATH}"
 
-          # 上传（最多重试 3 次，PUT 方法覆盖同名文件，避免 409 Duplicate）
-          # --max-time 900: 15分钟总超时（135M APK 实测需要 5-8 分钟）
-          # --connect-timeout 60: 连接超时单独控制
-          # --speed-limit 512 --speed-time 90: 90秒内速度低于 512B/s 视为卡死并中止
+          # 上传（最多重试 3 次，PUT 方法覆盖同名文件）
+          # --max-time 2700: 45分钟上限（141M @ 400KB/s ≈ 6min，留足余量）
+          # 去掉 --speed-limit：大文件上传服务器处理时速度会短暂归零，误触 exit 28
           MAX_RETRY=3
           for i in $(seq 1 $MAX_RETRY); do
             echo "🔄 上传尝试 $i/$MAX_RETRY ..."
             RESP=$(curl -s -w "\n%{http_code}" \
-              --max-time 900 \
+              --max-time 2700 \
               --connect-timeout 60 \
-              --speed-limit 512 --speed-time 90 \
               -X PUT \
               "${{ secrets.SUPABASE_URL }}/storage/v1/object/apk-releases/${STORAGE_PATH}" \
               -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
