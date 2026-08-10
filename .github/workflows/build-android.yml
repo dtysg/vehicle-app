@@ -231,6 +231,20 @@ jobs:
           echo "   App 内更新弹窗将在下次启动后自动弹出"
           echo "================================================"
 
+      # ── 14.5 推送 EAS OTA 热更新（APK 构建后同步推一次，让已装旧 APK 的用户也能更新）──
+      - name: 🔄 推送 EAS OTA 热更新
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          NOTES="${{ github.event.inputs.release_notes }}"
+          if [ -z "$NOTES" ]; then NOTES="$(git log -1 --pretty=%s)"; fi
+          echo "📝 OTA 更新说明：${NOTES}"
+          npx eas-cli@latest update \
+            --channel production \
+            --message "${NOTES} (v${{ steps.version.outputs.name }})" \
+            --non-interactive
+          echo "✅ OTA 热更新已推送，已安装旧版 APK 的用户下次启动将自动获取最新代码"
+
       # ── 15. 把版本号回写到 GitHub（下次构建用）──────────
       - name: 🔖 回写版本号到 GitHub
         if: success()
