@@ -4880,61 +4880,56 @@ export default function HomePage() {
                         : null;
                       return (
                         <Animated.View style={[{
-                          flex: 1, minWidth: 72,
-                          borderRadius: 16,
+                          flex: 1,
+                          borderRadius: 14,
                           overflow: 'hidden',
                           borderWidth: 1.5, borderColor: cardBorder,
                           shadowColor: mainColor,
-                          shadowOffset: { width: 0, height: 4 },
+                          shadowOffset: { width: 0, height: 3 },
                         }, glowStyle]}>
                           <LinearGradient
                             colors={[`${mainColor}22`, `${mainColor}08`, 'rgba(0,0,0,0.15)']}
                             start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
                             style={{ alignItems: 'center',
-                              paddingTop: 7, paddingBottom: 6, paddingHorizontal: 2, gap: 0 }}
+                              paddingTop: 8, paddingBottom: 8, paddingHorizontal: 2, gap: 0 }}
                           >
                             {/* 🔥调价日标 */}
                             {isAdjustToday && (
-                              <Text style={{ position: 'absolute', top: 4, right: 5, fontSize: 9 }}>🔥</Text>
+                              <Text style={{ position: 'absolute', top: 3, right: 4, fontSize: 8 }}>🔥</Text>
                             )}
 
-                            {/* ── 油品标号 + 类型徽章 ── */}
+                            {/* ── 油品标号 ── */}
                             <Text
                               adjustsFontSizeToFit
                               numberOfLines={1}
-                              minimumFontScale={0.75}
-                              style={{ color: mainColor, fontSize: 13, fontWeight: '900',
-                                letterSpacing: 0.5, textAlign: 'center', width: '90%' }}
+                              minimumFontScale={0.7}
+                              style={{ color: mainColor, fontSize: 14, fontWeight: '900',
+                                letterSpacing: 0.3, textAlign: 'center', width: '94%' }}
                             >
                               {label}
                             </Text>
+
                             {/* 油品类型彩色小徽章 */}
-                            <View style={{ marginTop: 3, paddingHorizontal: 5, paddingVertical: 2,
+                            <View style={{ marginTop: 3, paddingHorizontal: 6, paddingVertical: 2,
                               borderRadius: 20, backgroundColor: `${mainColor}28`,
                               borderWidth: 1, borderColor: `${mainColor}50`,
-                              maxWidth: '88%', alignItems: 'center' }}>
-                              <Text
-                                adjustsFontSizeToFit
-                                numberOfLines={1}
-                                minimumFontScale={0.75}
-                                style={{ color: mainColor, fontSize: 8.5, fontWeight: '800',
-                                  letterSpacing: 0.2, textAlign: 'center' }}
-                              >
+                              alignSelf: 'center' }}>
+                              <Text style={{ color: mainColor, fontSize: 9, fontWeight: '800', letterSpacing: 0.2 }}>
                                 {sublabel}
                               </Text>
                             </View>
 
                             {/* 分隔线 */}
-                            <View style={{ width: '60%', height: 1, borderRadius: 1,
-                              backgroundColor: mainColor, opacity: 0.30, marginTop: 5, marginBottom: 4 }} />
+                            <View style={{ width: '55%', height: 1, borderRadius: 1,
+                              backgroundColor: mainColor, opacity: 0.28, marginTop: 5, marginBottom: 4 }} />
 
-                            {/* ── 价格大字（adjustsFontSizeToFit 自动防截断）── */}
+                            {/* ── 价格大字 ── */}
                             <Text
                               adjustsFontSizeToFit
                               numberOfLines={1}
-                              minimumFontScale={0.70}
-                              style={{ color: valClr, fontSize: 19, fontWeight: '900',
-                                letterSpacing: -0.5, textAlign: 'center', width: '92%' }}
+                              minimumFontScale={0.6}
+                              style={{ color: valClr, fontSize: 17, fontWeight: '900',
+                                letterSpacing: -0.5, textAlign: 'center', width: '96%' }}
                             >
                               {value}
                             </Text>
@@ -4947,8 +4942,8 @@ export default function HomePage() {
                             {/* ── 涨跌幅徽章 ── */}
                             <View style={{
                               marginTop: 4,
-                              paddingHorizontal: deltaStr ? 6 : 5,
-                              paddingVertical: 3,
+                              paddingHorizontal: deltaStr ? 5 : 4,
+                              paddingVertical: 2,
                               borderRadius: 20,
                               backgroundColor: deltaStr
                                 ? (delta! > 0.001 ? 'rgba(248,113,113,0.20)' : delta! < -0.001 ? 'rgba(74,222,128,0.18)' : 'rgba(255,255,255,0.06)')
@@ -4962,7 +4957,7 @@ export default function HomePage() {
                               {deltaStr ? (
                                 <>
                                   <Text style={{ color: deltaColor!, fontSize: 9, fontWeight: '900', lineHeight: 13 }}>{arrowChar}</Text>
-                                  <Text style={{ color: deltaColor!, fontSize: 10, fontWeight: '900', lineHeight: 13 }}>{deltaStr}</Text>
+                                  <Text style={{ color: deltaColor!, fontSize: 9, fontWeight: '900', lineHeight: 13 }}>{deltaStr}</Text>
                                 </>
                               ) : (
                                 <Text style={{ color: 'rgba(255,255,255,0.28)', fontSize: 9, fontWeight: '700' }}>持平</Text>
@@ -4974,14 +4969,9 @@ export default function HomePage() {
                     };
                     return (
                       <View>
-                        {/* 2×2 网格：上行92#+95#，下行98#+柴油 */}
-                        <View style={{ gap: CAPSULE_GAP }}>
-                          <View style={{ flexDirection: 'row', gap: CAPSULE_GAP }}>
-                            {items.slice(0, 2).map((item) => <PriceCapsule key={item.label} {...item} />)}
-                          </View>
-                          <View style={{ flexDirection: 'row', gap: CAPSULE_GAP }}>
-                            {items.slice(2, 4).map((item) => <PriceCapsule key={item.label} {...item} />)}
-                          </View>
+                        {/* 单行排列：92# 95# 98# 柴油 全部可见 */}
+                        <View style={{ flexDirection: 'row', gap: CAPSULE_GAP }}>
+                          {items.map((item) => <PriceCapsule key={item.label} {...item} />)}
                         </View>
                         {isEmpty && (
                           <Text style={{ color: 'rgba(255,191,36,0.45)', fontSize: 10, textAlign: 'center', marginTop: 6 }}>
