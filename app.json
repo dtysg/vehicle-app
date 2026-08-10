@@ -2,7 +2,7 @@
   "expo": {
     "name": "车辆信息系统",
     "slug": "vehicle-app",
-    "version": "1.0.1365",
+    "version": "1.0.1412",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -23,7 +23,7 @@
         "backgroundColor": "#F4F5F7"
       },
       "predictiveBackGestureEnabled": false,
-      "versionCode": 1365,
+      "versionCode": 1328,
       "package": "com.miaoda.appd6jn0ph0piwx",
       "permissions": [
         "android.permission.CAMERA",
@@ -111,8 +111,9 @@
     ],
     "owner": "mygb",
     "updates": {
-      "enabled": false,
-      "checkAutomatically": "NEVER",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 3000,
       "url": "https://u.expo.dev/81711c9a-522d-4ceb-842b-6d1e1642115a"
     },
     "runtimeVersion": "1.0.0",
