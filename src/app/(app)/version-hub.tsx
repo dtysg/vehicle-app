@@ -259,10 +259,11 @@ function BuildsTab({ publishedMap, onPublished, onDeleteVersion }: {
 
   const fetchGhBuilds = useCallback(async () => {
     setGhLoading(true);
+    // GitHub Release URL 格式：https://github.com/xxx/releases/download/...
     const { data } = await supabase
       .from('app_versions')
       .select('*')
-      .like('apk_url', '%apk-releases%')
+      .like('apk_url', '%github.com%')
       .order('version_code', { ascending: false })
       .limit(10);
     setGhBuilds(data ?? []);
