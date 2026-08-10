@@ -22,6 +22,9 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: write   # 允许 push 版本号回 GitHub
+    outputs:
+      version_name: ${{ steps.version.outputs.name }}
+      release_notes: ${{ steps.relnotes.outputs.notes }}
 
     steps:
       # ── 1. 检出代码 ────────────────────────────────────
@@ -111,6 +114,14 @@ jobs:
             fs.writeFileSync('app.json', JSON.stringify(a, null, 2) + '\n');
             console.log('✅ app.json 已更新 →', '${NEW_VERSION}');
           "
+
+      # ── 5.8 暂存 release_notes 到 job outputs ──────────
+      - name: 📝 暂存发布说明
+        id: relnotes
+        run: |
+          NOTES="${{ github.event.inputs.release_notes }}"
+          if [ -z "$NOTES" ]; then NOTES="$(git log -1 --pretty=%s)"; fi
+          echo "notes=${NOTES}" >> $GITHUB_OUTPUT
 
       # ── 6. Expo Prebuild（生成 android 原生工程）───────
       - name: 🛠️ Expo Prebuild
@@ -231,20 +242,6 @@ jobs:
           echo "   App 内更新弹窗将在下次启动后自动弹出"
           echo "================================================"
 
-      # ── 14.5 推送 EAS OTA 热更新（APK 构建后同步推一次，让已装旧 APK 的用户也能更新）──
-      - name: 🔄 推送 EAS OTA 热更新
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          NOTES="${{ github.event.inputs.release_notes }}"
-          if [ -z "$NOTES" ]; then NOTES="$(git log -1 --pretty=%s)"; fi
-          echo "📝 OTA 更新说明：${NOTES}"
-          npx eas-cli@latest update \
-            --channel production \
-            --message "${NOTES} (v${{ steps.version.outputs.name }})" \
-            --non-interactive
-          echo "✅ OTA 热更新已推送，已安装旧版 APK 的用户下次启动将自动获取最新代码"
-
       # ── 15. 把版本号回写到 GitHub（下次构建用）──────────
       - name: 🔖 回写版本号到 GitHub
         if: success()
@@ -261,3 +258,56 @@ jobs:
             git push origin main
             echo "✅ app.json 版本已回写: ${{ steps.version.outputs.name }}"
           fi
+
+# ── 独立 OTA job：build 成功后异步推送，不占用 build 的 timeout ──
+  ota:
+    name: 🔄 推送 EAS OTA 热更新
+    needs: [build]
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+
+      - name: 🟢 配置 Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: 🗂️ 复用 node_modules 缓存
+        id: nm-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: nm-${{ runner.os }}-
+
+      - name: 📦 安装依赖
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: 🔑 写入环境变量
+        run: |
+          echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}"           >> .env
+          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
+          echo "EXPO_PUBLIC_APP_ID=app-d6jn0ph0piwx"                            >> .env
+
+      - name: 🔄 EAS Update 推送到 production 频道
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          NOTES="${{ needs.build.outputs.release_notes }}"
+          VERSION="${{ needs.build.outputs.version_name }}"
+          echo "📝 OTA 更新说明：${NOTES} (v${VERSION})"
+          npx eas-cli@latest update \
+            --channel production \
+            --message "${NOTES} (v${VERSION})" \
+            --non-interactive
+          echo "✅ OTA 热更新已推送，已安装旧版 APK 的用户下次启动将自动获取最新代码"
