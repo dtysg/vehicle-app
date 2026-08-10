@@ -54,6 +54,7 @@ export function useApkUpdate(skipCheck = false): ApkUpdateState {
       const { data, error } = await supabase
         .from('app_versions')
         .select('version_name, version_code, apk_url, release_notes, is_force')
+        .eq('published', true)
         .order('version_code', { ascending: false })
         .limit(1)
         .maybeSingle();
