@@ -69,14 +69,27 @@ jobs:
           echo "EXPO_PUBLIC_APP_ID=app-d6jn0ph0piwx" >> .env
 
       # ── 5.5 缓存 Gradle（加速后续构建）──────────────────
+      # 注意：key 不能用 *.gradle* 文件哈希（expo prebuild --clean 每次重新生成 android/ 目录）
+      # 改用 pnpm-lock.yaml + app.json 作为 key，这些文件稳定且能反映依赖变化
       - name: 🗄️ 缓存 Gradle
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+            ~/.gradle/build-cache
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml', 'app.json') }}
           restore-keys: gradle-${{ runner.os }}-
+
+      # ── 5.6 缓存 Metro bundler ────────────────────────
+      - name: ⚡ 缓存 Metro bundler
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.metro-cache
+            ${{ github.workspace }}/node_modules/.cache
+          key: metro-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: metro-${{ runner.os }}-
 
       # ── 5.7 计算新版本号并更新 app.json（必须在 prebuild 前）──
       - name: 📋 计算并写入版本号
@@ -127,7 +140,7 @@ jobs:
           chmod +x gradlew
           # 增加 JVM 内存防止 OOM Metaspace，跳过 lint（不影响 APK 功能）
           echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseG1GC" >> gradle.properties
-          ./gradlew assembleRelease --no-daemon \
+          ./gradlew assembleRelease --no-daemon --build-cache \
             -x lintVitalAnalyzeRelease \
             -x lintVitalRelease \
             -x lint
