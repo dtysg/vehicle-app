@@ -46,19 +46,17 @@ jobs:
         with:
           version: 10
 
-      # ── 4. 安装依赖（带缓存）────────────────────────────
-      - name: 📂 获取 pnpm store 路径
-        id: pnpm-cache
-        run: echo "store=$(pnpm store path)" >> $GITHUB_OUTPUT
-
+      # ── 4. 安装依赖（直接缓存 node_modules，命中时跳过 install）──
       - name: 🗂️ 缓存 node_modules
+        id: nm-cache
         uses: actions/cache@v4
         with:
-          path: ${{ steps.pnpm-cache.outputs.store }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: pnpm-${{ runner.os }}-
+          path: node_modules
+          key: nm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: nm-${{ runner.os }}-
 
       - name: 📦 安装依赖
+        if: steps.nm-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       # ── 5. 写 .env（注入 Supabase 配置）───────────────
@@ -68,17 +66,14 @@ jobs:
           echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
           echo "EXPO_PUBLIC_APP_ID=app-d6jn0ph0piwx" >> .env
 
-      # ── 5.5 缓存 Gradle（加速后续构建）──────────────────
-      # key 只用 pnpm-lock.yaml，不含 app.json（app.json 每次版本号递增会导致 key 每次不命中）
-      - name: 🗄️ 缓存 Gradle
-        uses: actions/cache@v4
+      # ── 5.5 Gradle 缓存（用官方 gradle/actions，比手动 cache 更智能）──
+      # setup-gradle 自动缓存: wrapper/caches/build-cache/configuration-cache
+      # 并在 build-scan 中报告缓存命中情况
+      - name: 🗄️ 配置 Gradle 缓存
+        uses: gradle/actions/setup-gradle@v4
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-            ~/.gradle/build-cache
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: gradle-${{ runner.os }}-
+          gradle-version: wrapper
+          cache-read-only: false
 
       # ── 5.6 缓存 Metro bundler ────────────────────────
       - name: ⚡ 缓存 Metro bundler
@@ -86,7 +81,7 @@ jobs:
         with:
           path: |
             ${{ github.workspace }}/.metro-cache
-            ${{ github.workspace }}/node_modules/.cache
+            ${{ github.workspace }}/node_modules/.cache/metro
           key: metro-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: metro-${{ runner.os }}-
 
@@ -137,12 +132,16 @@ jobs:
         run: |
           cd android
           chmod +x gradlew
-          # Xmx4g：7GB runner 留 3GB 给 Node.js/Metro，避免 GC 抖动拖慢编译
-          # --parallel --configure-on-demand：多任务并行，按需配置子项目
-          echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m -XX:+UseG1GC" >> gradle.properties
-          echo "org.gradle.parallel=true"           >> gradle.properties
-          echo "org.gradle.configureondemand=true"  >> gradle.properties
-          echo "org.gradle.caching=true"            >> gradle.properties
+          # JVM 优化：-Xms2g 预分配堆避免频繁扩容，GCTimeRatio=19 限制 GC 占用≤5%
+          # workers.max=2：匹配 ubuntu-latest 的 2 vCPU，避免过度并发
+          # configuration-cache：缓存配置阶段产物，第二次构建跳过配置 ~5min
+          echo "org.gradle.jvmargs=-Xmx4g -Xms2g -XX:MaxMetaspaceSize=512m -XX:+UseG1GC -XX:GCTimeRatio=19 -Dfile.encoding=UTF-8" >> gradle.properties
+          echo "org.gradle.parallel=true"                     >> gradle.properties
+          echo "org.gradle.configureondemand=true"            >> gradle.properties
+          echo "org.gradle.caching=true"                      >> gradle.properties
+          echo "org.gradle.workers.max=2"                     >> gradle.properties
+          echo "org.gradle.configuration-cache=true"         >> gradle.properties
+          echo "org.gradle.configuration-cache.problems=warn" >> gradle.properties
           ./gradlew assembleRelease --no-daemon --build-cache --parallel \
             -x lintVitalAnalyzeRelease \
             -x lintVitalRelease \
