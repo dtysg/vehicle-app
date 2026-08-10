@@ -66,14 +66,16 @@ jobs:
           echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
           echo "EXPO_PUBLIC_APP_ID=app-d6jn0ph0piwx" >> .env
 
-      # ── 5.5 Gradle 缓存（用官方 gradle/actions，比手动 cache 更智能）──
-      # setup-gradle 自动缓存: wrapper/caches/build-cache/configuration-cache
-      # 并在 build-scan 中报告缓存命中情况
-      - name: 🗄️ 配置 Gradle 缓存
-        uses: gradle/actions/setup-gradle@v4
+      # ── 5.5 缓存 Gradle（手动 cache，key 不含 app.json 避免每次版本号变动导致 miss）──
+      - name: 🗄️ 缓存 Gradle
+        uses: actions/cache@v4
         with:
-          gradle-version: wrapper
-          cache-read-only: false
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.gradle/build-cache
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: gradle-${{ runner.os }}-
 
       # ── 5.6 缓存 Metro bundler ────────────────────────
       - name: ⚡ 缓存 Metro bundler
