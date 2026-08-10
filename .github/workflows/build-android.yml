@@ -242,8 +242,8 @@ jobs:
             echo "⚠️ app.json 无变化，跳过回写"
           else
             git commit -m "ci: bump version to ${{ steps.version.outputs.name }} [skip ci]"
-            # pull --rebase 合并远端新提交（避免并发推送冲突），再 push
-            git pull --rebase origin main
+            # --autostash 自动暂存脏文件再 rebase，避免 "unstaged changes" 报错
+            git pull --rebase --autostash origin main
             git push origin main
             echo "✅ app.json 版本已回写: ${{ steps.version.outputs.name }}"
           fi
