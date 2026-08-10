@@ -4974,8 +4974,14 @@ export default function HomePage() {
                     };
                     return (
                       <View>
-                        <View style={{ flexDirection: 'row', gap: CAPSULE_GAP }}>
-                          {items.map((item) => <PriceCapsule key={item.label} {...item} />)}
+                        {/* 2×2 网格：上行92#+95#，下行98#+柴油 */}
+                        <View style={{ gap: CAPSULE_GAP }}>
+                          <View style={{ flexDirection: 'row', gap: CAPSULE_GAP }}>
+                            {items.slice(0, 2).map((item) => <PriceCapsule key={item.label} {...item} />)}
+                          </View>
+                          <View style={{ flexDirection: 'row', gap: CAPSULE_GAP }}>
+                            {items.slice(2, 4).map((item) => <PriceCapsule key={item.label} {...item} />)}
+                          </View>
                         </View>
                         {isEmpty && (
                           <Text style={{ color: 'rgba(255,191,36,0.45)', fontSize: 10, textAlign: 'center', marginTop: 6 }}>
