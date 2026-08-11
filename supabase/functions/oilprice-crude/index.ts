@@ -856,7 +856,14 @@ serve(async (req: Request): Promise<Response> => {
   );
 
   let force = false;
-  try { const b = await req.json(); force = b?.force === true; } catch { /* default */ }
+  let reqLastAdjustDateOverride = ""; // 允许请求体直接传入覆盖 DB 的 lastAdjustDate
+  try {
+    const b = await req.json();
+    force = b?.force === true;
+    if (b?.lastAdjustDate && /^\d{4}-\d{2}-\d{2}$/.test(b.lastAdjustDate)) {
+      reqLastAdjustDateOverride = b.lastAdjustDate;
+    }
+  } catch { /* default */ }
 
   // ── 解析请求参数：city + temp（供柴油温区切换使用）──
   let reqCity  = DEFAULT_CITY;
@@ -873,8 +880,14 @@ serve(async (req: Request): Promise<Response> => {
     .select("crude_brent,crude_wti,crude_dubai,crude_avg10d,crude_last_cycle_avg,crude_last_cycle_locked,crude_last_cycle_manual,crude_change_rate,crude_calc_text,crude_updated_at,crude_coeff_low,crude_coeff_high,crude_coeff_n,crude_avg10d_source,crude_rmb_rate,crude_avg10d_locked,crude_avg10d_manual,conv_coeff_92,conv_coeff_95,conv_coeff_98,conv_coeff_0,last_adjust_date,crude_basket_days,crude_basket_start")
     .eq("city", "天津").maybeSingle();
 
-  // 上次调价日（管理员设置）
-  const lastAdjustDate: string = cached?.last_adjust_date ?? "";
+  // 上次调价日：请求体覆盖 > DB值
+  const lastAdjustDate: string = reqLastAdjustDateOverride || cached?.last_adjust_date || "";
+
+  // 若请求体传入了 lastAdjustDate 覆盖值，同步写回所有城市 DB（幂等）
+  if (reqLastAdjustDateOverride) {
+    await db.from("oil_prices").update({ last_adjust_date: reqLastAdjustDateOverride }).neq("city", "");
+    console.log(`[原油] lastAdjustDate 已覆盖并写库: ${reqLastAdjustDateOverride}`);
+  }
 
   // 管理员手动锁定本期均价：锁定时不走 EIA/AI 抓取，直接用手动值
   const isManualLocked = cached?.crude_avg10d_locked === true && Number(cached?.crude_avg10d_manual) > 0;
