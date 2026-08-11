@@ -20,6 +20,7 @@ import { supabase } from '@/client/supabase';
 import { CURRENT_VERSION_CODE, useApkUpdate } from '@/hooks/useApkUpdate';
 
 const HIDDEN_BUILDS_KEY = '@version_hub:hidden_builds';
+const HIDDEN_RUNS_KEY   = '@version_hub:hidden_runs';
 
 type Tab = 'builds' | 'versions';
 type BuildStatus = 'NEW' | 'IN_QUEUE' | 'IN_PROGRESS' | 'FINISHED' | 'ERRORED' | 'CANCELLED' | 'TIMED_OUT';
@@ -235,8 +236,11 @@ function BuildsTab({ publishedMap, onPublished, onDeleteVersion }: {
   const [publishBuild, setPublishBuild] = useState<EasBuild | null>(null);
   const [localPublished, setLocalPublished] = useState<Map<string, string>>(new Map());
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
+  const [hiddenRunIds, setHiddenRunIds] = useState<Set<string>>(new Set());
   const [deleteBuild, setDeleteBuild] = useState<EasBuild | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [triggering, setTriggering] = useState(false);
+  const [triggerMsg, setTriggerMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   // GitHub Actions DB 记录（已完成构建）
   const [ghBuilds, setGhBuilds]   = useState<AppVersion[]>([]);
@@ -253,6 +257,8 @@ function BuildsTab({ publishedMap, onPublished, onDeleteVersion }: {
       try {
         const raw = await AsyncStorage.getItem(HIDDEN_BUILDS_KEY);
         if (raw) setHiddenIds(new Set(JSON.parse(raw)));
+        const rawRuns = await AsyncStorage.getItem(HIDDEN_RUNS_KEY);
+        if (rawRuns) setHiddenRunIds(new Set(JSON.parse(rawRuns)));
       } catch { /* ignore */ }
     })();
   }, []);
@@ -331,7 +337,41 @@ function BuildsTab({ publishedMap, onPublished, onDeleteVersion }: {
     setDeleteBuild(null);
   }, [deleteBuild, hiddenIds]);
 
+  // 隐藏 GitHub Actions run（本地 + 可选删 DB 中对应记录）
+  const hideRun = useCallback(async (runId: string, matchedDbId?: string) => {
+    const next = new Set([...hiddenRunIds, runId]);
+    setHiddenRunIds(next);
+    await AsyncStorage.setItem(HIDDEN_RUNS_KEY, JSON.stringify([...next])).catch(() => {});
+    if (matchedDbId) {
+      try { await supabase.from('app_versions').delete().eq('id', matchedDbId); } catch { /* ignore */ }
+      setGhBuilds(prev => prev.filter(b => String(b.id) !== matchedDbId));
+    }
+  }, [hiddenRunIds]);
+
+  // 触发新 GitHub Actions 构建
+  const triggerBuild = useCallback(async () => {
+    setTriggering(true);
+    setTriggerMsg(null);
+    try {
+      const { data, error: fnErr } = await supabase.functions.invoke('github-builds', {
+        body: { action: 'trigger', ref: 'main' },
+      });
+      if (fnErr || data?.error) {
+        setTriggerMsg({ ok: false, text: data?.error ?? fnErr?.message ?? '触发失败' });
+      } else {
+        setTriggerMsg({ ok: true, text: '已提交构建任务，约 1 分钟后出现在列表' });
+        // 3 秒后刷新 runs
+        setTimeout(() => { void fetchGhRuns(); }, 3000);
+      }
+    } catch (e: unknown) {
+      setTriggerMsg({ ok: false, text: String(e) });
+    } finally {
+      setTriggering(false);
+    }
+  }, [fetchGhRuns]);
+
   const visibleBuilds = builds.filter(b => !hiddenIds.has(b.id));
+  const visibleRuns   = ghRuns.filter(r => !hiddenRunIds.has(String(r.id)));
   const hasActive = visibleBuilds.some(b => ['IN_PROGRESS', 'IN_QUEUE', 'NEW'].includes(b.status));
 
   return (
@@ -361,8 +401,43 @@ function BuildsTab({ publishedMap, onPublished, onDeleteVersion }: {
           )}
         </View>
 
+        {/* 触发新构建按钮 */}
+        <Pressable
+          onPress={triggerBuild}
+          disabled={triggering || hasActiveRun}
+          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7,
+            backgroundColor: triggering || hasActiveRun ? 'rgba(52,211,153,0.07)' : 'rgba(52,211,153,0.18)',
+            borderRadius: 11, paddingVertical: 11,
+            borderWidth: 1.5, borderColor: triggering || hasActiveRun ? 'rgba(52,211,153,0.2)' : 'rgba(52,211,153,0.5)',
+            opacity: triggering || hasActiveRun ? 0.6 : 1 }}>
+          {triggering
+            ? <ActivityIndicator size="small" color="#34D399" />
+            : <Hammer size={14} color="#34D399" />}
+          <Text style={{ color: '#34D399', fontSize: 13, fontWeight: '800' }}>
+            {triggering ? '提交中…' : hasActiveRun ? '构建中，请等待完成' : '触发新构建'}
+          </Text>
+        </Pressable>
+
+        {/* 触发结果提示 */}
+        {triggerMsg && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8,
+            backgroundColor: triggerMsg.ok ? 'rgba(52,211,153,0.1)' : 'rgba(239,68,68,0.1)',
+            borderRadius: 10, padding: 10,
+            borderWidth: 1, borderColor: triggerMsg.ok ? 'rgba(52,211,153,0.3)' : 'rgba(239,68,68,0.3)' }}>
+            {triggerMsg.ok
+              ? <CheckCircle2 size={13} color="#34D399" />
+              : <XCircle size={13} color="#F87171" />}
+            <Text style={{ color: triggerMsg.ok ? '#6EE7B7' : '#FCA5A5', fontSize: 12, flex: 1 }}>
+              {triggerMsg.text}
+            </Text>
+            <Pressable onPress={() => setTriggerMsg(null)} hitSlop={8}>
+              <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13 }}>×</Text>
+            </Pressable>
+          </View>
+        )}
+
         {/* ── 实时 runs（来自 GitHub API）── */}
-        {ghRuns.slice(0, 5).map((run) => {
+        {visibleRuns.slice(0, 5).map((run) => {
           const isActive  = run.status === 'in_progress' || run.status === 'queued';
           const isSuccess = run.status === 'completed' && run.conclusion === 'success';
           const isFail    = run.status === 'completed' && (run.conclusion === 'failure' || run.conclusion === 'timed_out');
@@ -474,6 +549,16 @@ function BuildsTab({ publishedMap, onPublished, onDeleteVersion }: {
                     <ChevronRight size={14} color="rgba(255,255,255,0.35)" />
                   </Pressable>
                 </View>
+                {/* 删除按钮 — 全宽 */}
+                <Pressable
+                  onPress={() => hideRun(String(run.id), matchedDb ? String(matchedDb.id) : undefined)}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                    gap: 6, borderRadius: 9, paddingVertical: 9, marginTop: 2,
+                    backgroundColor: 'rgba(239,68,68,0.08)',
+                    borderWidth: 1, borderColor: 'rgba(239,68,68,0.22)' }}>
+                  <Trash2 size={13} color="#F87171" />
+                  <Text style={{ color: '#F87171', fontSize: 12, fontWeight: '700' }}>删除此构建记录</Text>
+                </Pressable>
               </LinearGradient>
             </View>
           );
@@ -726,13 +811,15 @@ function BuildsTab({ publishedMap, onPublished, onDeleteVersion }: {
                     <Download size={13} color="#94A3B8" />
                   </Pressable>
                 )}
-                {/* 删除按钮（完成/失败/取消状态） */}
+                {/* 删除按钮（完成/失败/取消状态）— 全宽 */}
                 {!isActive && (
                   <Pressable onPress={() => setDeleteBuild(build)}
-                    style={{ width: 38, alignItems: 'center', justifyContent: 'center',
-                      backgroundColor: 'rgba(239,68,68,0.07)', borderRadius: 9,
-                      borderWidth: 1, borderColor: 'rgba(239,68,68,0.18)' }}>
-                    <Trash2 size={14} color="#EF4444" />
+                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                      gap: 6, borderRadius: 9, paddingVertical: 9, marginTop: 2,
+                      backgroundColor: 'rgba(239,68,68,0.08)',
+                      borderWidth: 1, borderColor: 'rgba(239,68,68,0.22)' }}>
+                    <Trash2 size={13} color="#F87171" />
+                    <Text style={{ color: '#F87171', fontSize: 12, fontWeight: '700' }}>删除此构建记录</Text>
                   </Pressable>
                 )}
               </View>
