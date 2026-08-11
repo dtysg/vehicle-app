@@ -197,15 +197,37 @@ jobs:
             --notes "$NOTES"
 
           # 获取下载直链
-          APK_URL=$(gh release view "$TAG" --json assets \
-            --jq '.assets[0].browserDownloadUrl' 2>/dev/null || true)
-          if [ -z "${APK_URL}" ]; then
-            APK_URL="https://github.com/dtysg/vehicle-app/releases/download/${TAG}/${APK_ASSET}"
-            echo "⚠️ gh 查询为空，使用拼接直链: ${APK_URL}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "✅ GitHub Release 发布成功"
+
+      # ── 11.5 上传 APK 到 Supabase 公开存储桶 ─────────────────────────────
+      - name: ☁️ 上传 APK 到 Supabase Storage
+        id: supabase_upload
+        run: |
+          VERSION_NAME="${{ steps.version.outputs.name }}"
+          APK_ASSET="vehicle-app-${VERSION_NAME}.apk"
+          SUPABASE_URL="${{ secrets.SUPABASE_URL }}"
+          ANON_KEY="${{ secrets.SUPABASE_ANON_KEY }}"
+
+          curl -sf -X DELETE "${SUPABASE_URL}/storage/v1/object/apk-releases/${APK_ASSET}" \
+            -H "Authorization: Bearer ${ANON_KEY}" 2>/dev/null || true
+
+          UPLOAD_CODE=$(curl -s -o /tmp/up.txt -w "%{http_code}" \
+            -X POST "${SUPABASE_URL}/storage/v1/object/apk-releases/${APK_ASSET}" \
+            -H "Authorization: Bearer ${ANON_KEY}" \
+            -H "Content-Type: application/vnd.android.package-archive" \
+            --data-binary @"${APK_ASSET}")
+
+          if [[ "$UPLOAD_CODE" == "200" || "$UPLOAD_CODE" == "201" ]]; then
+            PUBLIC_URL="${SUPABASE_URL}/storage/v1/object/public/apk-releases/${APK_ASSET}"
+            echo "apk_url=${PUBLIC_URL}" >> $GITHUB_OUTPUT
+            echo "✅ Supabase 上传成功: ${PUBLIC_URL}"
+          else
+            TAG="v${VERSION_NAME}"
+            PUBLIC_URL="https://github.com/dtysg/vehicle-app/releases/download/${TAG}/${APK_ASSET}"
+            echo "apk_url=${PUBLIC_URL}" >> $GITHUB_OUTPUT
+            echo "⚠️ Supabase 上传失败(${UPLOAD_CODE})，降级 GH Release"; cat /tmp/up.txt
           fi
-          echo "apk_url=${APK_URL}" >> $GITHUB_OUTPUT
-          echo "tag=${TAG}"         >> $GITHUB_OUTPUT
-          echo "✅ Release 发布成功: ${APK_URL}"
 
       # ── 12. 写入 app_versions 表 ──────────────────────
       - name: 📝 写入版本记录
@@ -215,9 +237,9 @@ jobs:
             NOTES="$(git log -1 --pretty=%s)"
           fi
 
-          APK_URL="${{ steps.upload.outputs.apk_url }}"
+          APK_URL="${{ steps.supabase_upload.outputs.apk_url }}"
           if [ -z "${APK_URL}" ]; then
-            APK_URL="https://github.com/dtysg/vehicle-app/releases/download/v${{ steps.version.outputs.name }}/vehicle-app-${{ steps.version.outputs.name }}.apk"
+            APK_URL="${{ secrets.SUPABASE_URL }}/storage/v1/object/public/apk-releases/vehicle-app-${{ steps.version.outputs.name }}.apk"
           fi
           curl -sf -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/app_versions" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
