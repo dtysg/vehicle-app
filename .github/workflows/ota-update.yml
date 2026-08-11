@@ -1,0 +1,76 @@
+name: 🔄 OTA 热更新推送
+
+# 每次推代码到 main 自动触发，仅更新 JS 包，无需重新打 APK
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/workflows/build-android.yml'
+
+jobs:
+  ota:
+    name: 推送 EAS OTA 热更新
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # 跳过版本号回写 commit（防止 APK 构建 bot 循环触发本工作流）
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+
+    steps:
+      # ── 1. 检出代码 ────────────────────────────────────
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+
+      # ── 2. Node.js 环境 ────────────────────────────────
+      - name: 🟢 配置 Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ── 3. pnpm ────────────────────────────────────────
+      - name: 📦 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # ── 4. node_modules 缓存（与 APK 构建共享同一 key）──
+      - name: 🗂️ 缓存 node_modules
+        id: nm-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: nm-${{ runner.os }}-
+
+      - name: 📦 安装依赖
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      # ── 5. 注入 Supabase 环境变量（打包进 JS Bundle）──
+      - name: 🔑 写入环境变量
+        run: |
+          echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}"       >> .env
+          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
+          echo "EXPO_PUBLIC_APP_ID=app-d6jn0ph0piwx"                        >> .env
+
+      # ── 6. 推送 EAS OTA 更新（仅 JS Bundle，~2 分钟）──
+      - name: 🔄 EAS Update 推送到 production 频道
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          COMMIT_MSG="$(git log -1 --pretty=%s)"
+          echo "📝 本次更新说明：${COMMIT_MSG}"
+          npx eas-cli@latest update \
+            --channel production \
+            --message "${COMMIT_MSG}" \
+            --non-interactive
+
+      # ── 7. 完成 ────────────────────────────────────────
+      - name: ✅ OTA 推送完成
+        run: |
+          echo "========================================"
+          echo "🔄 OTA 热更新已推送到 production 频道"
+          echo "   用户下次启动 App 将自动获取最新 JS 代码"
+          echo "   无需重新安装 APK ✅"
+          echo "========================================"

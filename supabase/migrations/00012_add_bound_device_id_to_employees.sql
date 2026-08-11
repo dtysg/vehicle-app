@@ -1,0 +1,1 @@
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS bound_device_id TEXT DEFAULT NULL;

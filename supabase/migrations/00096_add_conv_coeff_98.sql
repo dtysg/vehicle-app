@@ -1,0 +1,1 @@
+ALTER TABLE oil_prices ADD COLUMN IF NOT EXISTS conv_coeff_98 numeric;

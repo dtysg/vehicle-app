@@ -1,0 +1,346 @@
+name: 🤖 构建 Android APK
+
+on:
+  # 手动触发（在 GitHub App 里点按钮即可）
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: '更新说明（选填）'
+        required: false
+        default: ''
+  # 也可以推代码时自动触发
+  push:
+    branches: [ master ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+jobs:
+  build:
+    name: 构建 APK 并发布
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write   # 允许 push 版本号回 GitHub
+    outputs:
+      version_name: ${{ steps.version.outputs.name }}
+      release_notes: ${{ steps.relnotes.outputs.notes }}
+
+    steps:
+      # ── 1. 检出代码 ────────────────────────────────────
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+
+      # ── 2. 环境：Java 17 ───────────────────────────────
+      - name: ☕ 配置 Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # ── 3. 环境：Node.js + pnpm ────────────────────────
+      - name: 🟢 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # ── 4. 安装依赖（直接缓存 node_modules，命中时跳过 install）──
+      - name: 🗂️ 缓存 node_modules
+        id: nm-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: nm-${{ runner.os }}-
+
+      - name: 📦 安装依赖
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      # ── 5. 写 .env（注入 Supabase 配置）───────────────
+      - name: 🔑 写入环境变量
+        run: |
+          echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> .env
+          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
+          echo "EXPO_PUBLIC_APP_ID=app-d6jn0ph0piwx" >> .env
+
+      # ── 5.5 缓存 Gradle（手动 cache，key 不含 app.json 避免每次版本号变动导致 miss）──
+      - name: 🗄️ 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.gradle/build-cache
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # ── 5.6 缓存 Metro bundler ────────────────────────
+      - name: ⚡ 缓存 Metro bundler
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.metro-cache
+            ${{ github.workspace }}/node_modules/.cache/metro
+          key: metro-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: metro-${{ runner.os }}-
+
+      # ── 5.7 计算新版本号并更新 app.json（必须在 prebuild 前）──
+      - name: 📋 计算并写入版本号
+        id: version
+        run: |
+          VERSION=$(node -e "const a=require('./app.json'); console.log(a.expo.version)")
+          MAJOR=$(echo $VERSION | awk -F. '{print $1}')
+          MINOR=$(echo $VERSION | awk -F. '{print $2}')
+          PATCH=$(echo $VERSION | awk -F. '{print $3}')
+          NEW_CODE=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${NEW_CODE}"
+          echo "name=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "code=${NEW_CODE}"    >> $GITHUB_OUTPUT
+          echo "APK 版本: ${NEW_VERSION} (code: ${NEW_CODE})"
+
+          # 把新版本写入 app.json，让 APK 内嵌正确版本号
+          node -e "
+            const fs = require('fs');
+            const a  = JSON.parse(fs.readFileSync('app.json'));
+            a.expo.version = '${NEW_VERSION}';
+            a.expo.android = a.expo.android || {};
+            a.expo.android.versionCode = ${NEW_CODE};
+            fs.writeFileSync('app.json', JSON.stringify(a, null, 2) + '\n');
+            console.log('✅ app.json 已更新 →', '${NEW_VERSION}');
+          "
+
+      # ── 5.8 暂存 release_notes 到 job outputs ──────────
+      - name: 📝 暂存发布说明
+        id: relnotes
+        run: |
+          NOTES="${{ github.event.inputs.release_notes }}"
+          if [ -z "$NOTES" ]; then NOTES="$(git log -1 --pretty=%s)"; fi
+          echo "notes=${NOTES}" >> $GITHUB_OUTPUT
+
+      # ── 6. Expo Prebuild（生成 android 原生工程）───────
+      - name: 🛠️ Expo Prebuild
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: pnpm exec expo prebuild --platform android --clean
+
+      # ── 7. 写入 keystore 文件 ──────────────────────────
+      - name: 🔐 恢复 keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/vehicle-app.keystore
+
+      # ── 9. Gradle 构建 Release APK ─────────────────────
+      - name: 🔨 Gradle 构建 APK
+        # 必须在此步骤注入 env，Gradle 调用 Metro 打包时才能读到 EXPO_PUBLIC_* 变量
+        # 若只写 .env 文件，Gradle/Metro 不会自动读取，导致 Supabase 用 placeholder
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          EXPO_PUBLIC_APP_ID: app-d6jn0ph0piwx
+        run: |
+          cd android
+          chmod +x gradlew
+          # JVM 优化：-Xms2g 预分配堆避免频繁扩容，GCTimeRatio=19 限制 GC 占用≤5%
+          # workers.max=2：匹配 ubuntu-latest 的 2 vCPU，避免过度并发
+          # 注意：不加 configuration-cache，RN Gradle 插件与其不兼容会直接报错
+          echo "org.gradle.jvmargs=-Xmx4g -Xms2g -XX:MaxMetaspaceSize=512m -XX:+UseG1GC -XX:GCTimeRatio=19 -Dfile.encoding=UTF-8" >> gradle.properties
+          echo "org.gradle.parallel=true"          >> gradle.properties
+          echo "org.gradle.configureondemand=true" >> gradle.properties
+          echo "org.gradle.caching=true"           >> gradle.properties
+          echo "org.gradle.workers.max=2"          >> gradle.properties
+          ./gradlew assembleRelease --no-daemon --build-cache --parallel \
+            -x lintVitalAnalyzeRelease \
+            -x lintVitalRelease \
+            -x lint
+
+      # ── 10. 读取版本号（已在步骤 5.7 计算，这里只做复核日志）──
+      - name: 📋 读取版本信息
+        id: version_check
+        run: |
+          echo "✅ 版本确认: ${{ steps.version.outputs.name }} (code: ${{ steps.version.outputs.code }})"
+
+      # ── 11. 发布 GitHub Release（APK 附件挂在 Release，GitHub→GitHub 极速）──
+      - name: 🚀 发布 GitHub Release
+        id: upload
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+          VERSION_NAME="${{ steps.version.outputs.name }}"
+          TAG="v${VERSION_NAME}"
+          APK_ASSET="vehicle-app-${VERSION_NAME}.apk"
+
+          if [ ! -f "$APK_PATH" ]; then
+            echo "❌ APK 不存在: $APK_PATH"
+            exit 1
+          fi
+          echo "📦 APK 大小: $(du -sh $APK_PATH | cut -f1)"
+
+          # 复制为带版本号的文件名
+          cp "$APK_PATH" "$APK_ASSET"
+
+          # 若同名 tag 已存在则删除（避免重复触发时冲突）
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          git push origin --delete "$TAG" 2>/dev/null || true
+
+          NOTES="${{ github.event.inputs.release_notes }}"
+          if [ -z "$NOTES" ]; then NOTES="$(git log -1 --pretty=%s)"; fi
+
+          # 创建 Release 并上传 APK（GitHub 内部网络，速度稳定）
+          gh release create "$TAG" "$APK_ASSET" \
+            --title "$TAG" \
+            --notes "$NOTES"
+
+          # 获取下载直链
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "✅ GitHub Release 发布成功"
+
+      # ── 11.5 上传 APK 到 Supabase 公开存储桶 ─────────────────────────────
+      - name: ☁️ 上传 APK 到 Supabase Storage
+        id: supabase_upload
+        run: |
+          VERSION_NAME="${{ steps.version.outputs.name }}"
+          APK_ASSET="vehicle-app-${VERSION_NAME}.apk"
+          SUPABASE_URL="${{ secrets.SUPABASE_URL }}"
+          ANON_KEY="${{ secrets.SUPABASE_ANON_KEY }}"
+
+          curl -sf -X DELETE "${SUPABASE_URL}/storage/v1/object/apk-releases/${APK_ASSET}" \
+            -H "Authorization: Bearer ${ANON_KEY}" 2>/dev/null || true
+
+          UPLOAD_CODE=$(curl -s -o /tmp/up.txt -w "%{http_code}" \
+            -X POST "${SUPABASE_URL}/storage/v1/object/apk-releases/${APK_ASSET}" \
+            -H "Authorization: Bearer ${ANON_KEY}" \
+            -H "Content-Type: application/vnd.android.package-archive" \
+            --data-binary @"${APK_ASSET}")
+
+          if [[ "$UPLOAD_CODE" == "200" || "$UPLOAD_CODE" == "201" ]]; then
+            PUBLIC_URL="${SUPABASE_URL}/storage/v1/object/public/apk-releases/${APK_ASSET}"
+            echo "apk_url=${PUBLIC_URL}" >> $GITHUB_OUTPUT
+            echo "✅ Supabase 上传成功: ${PUBLIC_URL}"
+          else
+            TAG="v${VERSION_NAME}"
+            PUBLIC_URL="https://github.com/dtysg/vehicle-app/releases/download/${TAG}/${APK_ASSET}"
+            echo "apk_url=${PUBLIC_URL}" >> $GITHUB_OUTPUT
+            echo "⚠️ Supabase 上传失败(${UPLOAD_CODE})，降级 GH Release"; cat /tmp/up.txt
+          fi
+
+      # ── 12. 写入 app_versions 表 ──────────────────────
+      - name: 📝 写入版本记录
+        run: |
+          NOTES="${{ github.event.inputs.release_notes }}"
+          if [ -z "$NOTES" ]; then
+            NOTES="$(git log -1 --pretty=%s)"
+          fi
+
+          APK_URL="${{ steps.supabase_upload.outputs.apk_url }}"
+          if [ -z "${APK_URL}" ]; then
+            APK_URL="${{ secrets.SUPABASE_URL }}/storage/v1/object/public/apk-releases/vehicle-app-${{ steps.version.outputs.name }}.apk"
+          fi
+          curl -sf -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/app_versions" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates,return=representation" \
+            -d "{
+              \"version_name\": \"${{ steps.version.outputs.name }}\",
+              \"version_code\": ${{ steps.version.outputs.code }},
+              \"apk_url\": \"${APK_URL}\",
+              \"release_notes\": \"${NOTES}\",
+              \"is_force\": false,
+              \"published\": true
+            }"
+          echo "✅ 版本记录写入完成: ${APK_URL}"
+
+      # ── 13. 保存 APK 产物 ──────────────────────────────
+      - name: 💾 保存 APK 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: vehicle-app-${{ steps.version.outputs.name }}.apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+      # ── 14. 构建完成通知 ───────────────────────────────
+      - name: 🎉 构建完成
+        run: |
+          echo "================================================"
+          echo "🎉 APK 构建发布成功！"
+          echo "   版本：${{ steps.version.outputs.name }}"
+          echo "   下载：${{ steps.upload.outputs.apk_url }}"
+          echo "   App 内更新弹窗将在下次启动后自动弹出"
+          echo "================================================"
+
+      # ── 15. 把版本号回写到 GitHub（下次构建用）──────────
+      - name: 🔖 回写版本号到 GitHub
+        if: success()
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          git add app.json
+          if git diff --staged --quiet; then
+            echo "⚠️ app.json 无变化，跳过回写"
+          else
+            git commit -m "ci: bump version to ${{ steps.version.outputs.name }} [skip ci]"
+            # --autostash 自动暂存脏文件再 rebase，避免 "unstaged changes" 报错
+            git pull --rebase --autostash origin main
+            git push origin main
+            echo "✅ app.json 版本已回写: ${{ steps.version.outputs.name }}"
+          fi
+
+# ── 独立 OTA job：build 成功后异步推送，不占用 build 的 timeout ──
+  ota:
+    name: 🔄 推送 EAS OTA 热更新
+    needs: [build]
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+
+      - name: 🟢 配置 Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: 🗂️ 复用 node_modules 缓存
+        id: nm-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: nm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: nm-${{ runner.os }}-
+
+      - name: 📦 安装依赖
+        if: steps.nm-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: 🔑 写入环境变量
+        run: |
+          echo "EXPO_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}"           >> .env
+          echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
+          echo "EXPO_PUBLIC_APP_ID=app-d6jn0ph0piwx"                            >> .env
+
+      - name: 🔄 EAS Update 推送到 production 频道
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          NOTES="${{ needs.build.outputs.release_notes }}"
+          VERSION="${{ needs.build.outputs.version_name }}"
+          echo "📝 OTA 更新说明：${NOTES} (v${VERSION})"
+          npx eas-cli@latest update \
+            --channel production \
+            --message "${NOTES} (v${VERSION})" \
+            --non-interactive
+          echo "✅ OTA 热更新已推送，已安装旧版 APK 的用户下次启动将自动获取最新代码"
+
