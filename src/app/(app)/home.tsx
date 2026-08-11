@@ -1784,6 +1784,7 @@ export default function HomePage() {
     isSimul?: boolean;
     // 原油数据
     crudeBrent?: number; crudeWti?: number; crudeDubai?: number; crudeBasketAvg?: number;
+    crudeBasketBrent?: number; crudeBasketDubai?: number; crudeBasketMinas?: number; // 10日窗口均价（三品种）
     crudeBasketDays?: number; crudeBasketStart?: string; crudeEiaDataDate?: string; lastAdjustDate?: string;
     crudeAvg10d?: number; crudeLastCycleAvg?: number;
     crudeLastCycleAvgLocked?: boolean;  // DB 持久化锁定（crude_last_cycle_locked）
@@ -2145,6 +2146,9 @@ export default function HomePage() {
             crudeWti:           data.data?.wti,
             crudeDubai:         data.data?.dubai,
             crudeBasketAvg:     data.data?.basketAvg,
+            crudeBasketBrent:   data.data?.basketBrent,
+            crudeBasketDubai:   data.data?.basketDubai,
+            crudeBasketMinas:   data.data?.basketMinas,
             crudeBasketDays:    data.data?.basketDays,
             crudeBasketStart:   data.data?.basketStart,
             crudeEiaDataDate:   data.data?.eiaDataDate,
@@ -2200,6 +2204,9 @@ export default function HomePage() {
               crudeWti:           data.data?.wti,
               crudeDubai:         data.data?.dubai,
               crudeBasketAvg:     data.data?.basketAvg,
+              crudeBasketBrent:   data.data?.basketBrent,
+              crudeBasketDubai:   data.data?.basketDubai,
+              crudeBasketMinas:   data.data?.basketMinas,
               crudeBasketDays:    data.data?.basketDays,
               crudeBasketStart:   data.data?.basketStart,
               crudeEiaDataDate:   data.data?.eiaDataDate,
@@ -5256,6 +5263,10 @@ export default function HomePage() {
           const hasData = brent > 0;
           const wti   = oilPrice.crudeWti ?? (brent > 0 ? brent - 2 : 0);
           const dubai = oilPrice.crudeDubai ?? (brent > 0 ? +(brent - 1.5).toFixed(1) : 0);
+          // 10日窗口均价（三品种）：EF返回时优先使用，否则降级到现货价估算
+          const basketBrent = oilPrice.crudeBasketBrent ?? brent;
+          const basketDubai = oilPrice.crudeBasketDubai ?? dubai;
+          const basketMinas = oilPrice.crudeBasketMinas ?? (brent > 0 ? brent + 1.5 : wti);
           // ── 一揽子油加权均价：布伦特:阿曼:米纳斯 = 4:3:3（发改委权重）
           // EF 已实时计算并回传 crudeBasketAvg；无则前端本地加权兜底
           const basketAvg = oilPrice.crudeBasketAvg
@@ -5517,9 +5528,9 @@ export default function HomePage() {
                 {/* ── 国际原油价格行（布伦特 + 阿曼 + 米纳斯 + 变化率）── */}
                 <View style={{ flexDirection: 'row', alignItems: 'stretch', gap: 5 }}>
                   {[
-                    { label: '布伦特', val: brent, unit: '美元/桶', color: '#FB923C', border: 'rgba(251,146,60,0.30)', bg: 'rgba(251,146,60,0.09)', accent: true },
-                    { label: '阿曼',   val: dubai, unit: '美元/桶', color: '#FDE047', border: 'rgba(250,204,21,0.25)', bg: 'rgba(250,204,21,0.07)', accent: false },
-                    { label: '米纳斯', val: brent > 0 ? brent + 1.5 : wti, unit: '估算', color: '#C4B5FD', border: 'rgba(167,139,250,0.20)', bg: 'rgba(167,139,250,0.06)', accent: false },
+                    { label: '布伦特', val: basketBrent, unit: '10日均价', color: '#FB923C', border: 'rgba(251,146,60,0.30)', bg: 'rgba(251,146,60,0.09)', accent: true },
+                    { label: '阿曼',   val: basketDubai, unit: '10日均价', color: '#FDE047', border: 'rgba(250,204,21,0.25)', bg: 'rgba(250,204,21,0.07)', accent: false },
+                    { label: '米纳斯', val: basketMinas, unit: '10日均价', color: '#C4B5FD', border: 'rgba(167,139,250,0.20)', bg: 'rgba(167,139,250,0.06)', accent: false },
                   ].map(({ label, val, unit, color, border, bg }) => (
                     <View key={label} style={{ flex: 1, backgroundColor: bg, borderRadius: 12,
                       paddingHorizontal: 6, paddingVertical: 9, borderWidth: 1, borderColor: border,
@@ -5616,9 +5627,9 @@ export default function HomePage() {
                         <View style={{ width: 1, height: 44, backgroundColor: 'rgba(255,255,255,0.07)' }} />
                         <View style={{ flex: 1, gap: 5 }}>
                           {[
-                            { label: '布伦特', val: brent, color: '#FB923C', w: 0.4 },
-                            { label: '阿曼',   val: dubai, color: '#FDE047', w: 0.3 },
-                            { label: '米纳斯', val: brent > 0 ? brent + 1.5 : wti, color: '#C4B5FD', w: 0.3 },
+                            { label: '布伦特', val: basketBrent, color: '#FB923C', w: 0.4 },
+                            { label: '阿曼',   val: basketDubai, color: '#FDE047', w: 0.3 },
+                            { label: '米纳斯', val: basketMinas, color: '#C4B5FD', w: 0.3 },
                           ].map(({ label, val, color, w }) => (
                             <View key={label} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
                               <Text style={{ color: 'rgba(255,255,255,0.32)', fontSize: 8, width: 28 }}>{label}</Text>
