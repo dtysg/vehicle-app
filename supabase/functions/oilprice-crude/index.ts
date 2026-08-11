@@ -43,6 +43,7 @@ const CNBC_URL = "https://quote.cnbc.com/quote-html-webservice/restQuote/symbolT
 const YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/spark?symbols=CL%3DF%2CBZ%3DF&range=1d&interval=1d&indicators=close&includeTimestamps=false";
 const EIA_BASE = "https://api.eia.gov/v2/petroleum/pri/spt/data/";
 const EIA_KEY  = "DEMO_KEY";
+const AV_KEY   = Deno.env.get("ALPHAVANTAGE_API_KEY") ?? ""; // Alpha Vantage（EIA 同源，更新更快）
 
 // ── 税费联动公式物理常量 ──────────────────────────────────────
 const BARREL_PER_TON    = 7.33;   // 布伦特原油：桶/吨
@@ -488,11 +489,70 @@ async function fetchCnbcRealtime(): Promise<{ brent: number; wti: number; dubai:
 }
 
 // ══════════════════════════════════════════════════════════════════
-// EIA 历史均价（按计价周期窗口：从 lastAdjustDate 后首个工作日起，最多取10条有效日数据）
-// 同时拉布伦特(EPCBRENT) + WTI(EPCRWTI) 两品种，各自求窗口均价
-// 阿曼（迪拜）无独立 EIA 现货品种，用实时盘价利差叠加布伦特均价推算
+// 多源原油历史窗口均价
+//   优先级：FRED（Platts Dated Brent 同源，免费）→ Alpha Vantage → EIA 直连
+//   缺失工作日用 CNBC 实时价填充，避免旧价外推造成均价偏高
+//   Dubai/阿曼：改用 WTI - 4.0（中质含硫品质折扣，远比 Brent-2.0 准确）
 // ══════════════════════════════════════════════════════════════════
-async function fetchEiaWindowAvg(lastAdjustDate?: string, brentDubaiSpread = 2.0): Promise<{
+
+/** FRED 免费 CSV — DCOILBRENTEU = Platts Dated Brent spot，与发改委口径一致 */
+async function fetchFredSeries(
+  seriesId: string,
+  startDate: string,
+): Promise<Array<{ period: string; val: number }>> {
+  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${seriesId}`;
+  const resp = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0", "Accept": "text/csv" },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!resp.ok) throw new Error(`FRED ${seriesId} HTTP ${resp.status}`);
+  const text = await resp.text();
+  const rows: Array<{ period: string; val: number }> = [];
+  for (const line of text.split("\n").slice(1)) {
+    const parts = line.split(",");
+    const d = parts[0]?.trim();
+    const v = parseFloat(parts[1]?.trim() ?? "");
+    if (d && d >= startDate && v > 0 && /^\d{4}-\d{2}-\d{2}$/.test(d)) rows.push({ period: d, val: v });
+  }
+  console.log(`[FRED] ${seriesId}: ${rows.length} 行 from ${startDate}`);
+  return rows.slice(-15);
+}
+
+/** Alpha Vantage commodity daily — EIA 同源但更新更快（500次/天免费） */
+async function fetchAvDaily(
+  commodity: "BRENT" | "WTI",
+  startDate: string,
+): Promise<Array<{ period: string; val: number }>> {
+  if (!AV_KEY) throw new Error("AV_KEY 未配置");
+  const url = `https://www.alphavantage.co/query?function=${commodity}&interval=daily&apikey=${AV_KEY}`;
+  const resp = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0" },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!resp.ok) throw new Error(`AV ${commodity} HTTP ${resp.status}`);
+  const json = await resp.json();
+  if (json.Information) throw new Error(`AV 限流: ${json.Information}`);
+  const raw: Array<{ date: string; value: string }> = json.data ?? [];
+  // AV 返回最新在前，reverse 转升序
+  const rows = raw
+    .filter(r => r.date >= startDate && parseFloat(r.value) > 0)
+    .map(r => ({ period: r.date, val: parseFloat(r.value) }))
+    .reverse()
+    .slice(0, 12);
+  console.log(`[AV] ${commodity}: ${rows.length} 行 from ${startDate}`);
+  return rows;
+}
+
+/**
+ * 三品种窗口均价（FRED → AV → EIA 三层 fallback）
+ * @param realtimeBrent  CNBC 实时 Brent，填充缺失工作日（0=不填充）
+ * @param realtimeWti    CNBC 实时 WTI，同上
+ */
+async function fetchWindowAvg(
+  lastAdjustDate?: string,
+  realtimeBrent = 0,
+  realtimeWti   = 0,
+): Promise<{
   avg10d: number; dataDate: string; days: number; startDate: string;
   avgBrent: number; avgWti: number; avgDubai: number;
 }> {
@@ -502,65 +562,113 @@ async function fetchEiaWindowAvg(lastAdjustDate?: string, brentDubaiSpread = 2.0
     while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() + 1);
     return d.toISOString().slice(0, 10);
   }
-  const todayStr = new Date().toISOString().slice(0, 10);
+  function isWorkday(ds: string): boolean {
+    const day = new Date(ds + "T12:00:00Z").getUTCDay();
+    return day !== 0 && day !== 6;
+  }
 
-  // 计算窗口起始日
+  const todayStr = new Date().toISOString().slice(0, 10);
   let windowStart = "";
   if (lastAdjustDate && /^\d{4}-\d{2}-\d{2}$/.test(lastAdjustDate)) {
     windowStart = nextWorkday(lastAdjustDate);
   } else {
     windowStart = new Date(Date.now() - 14 * 86400_000).toISOString().slice(0, 10);
-    console.log(`[EIA] 无调价日，降级近14天 start=${windowStart}`);
+    console.log(`[窗口] 无调价日，降级近14天 start=${windowStart}`);
   }
-  console.log(`[EIA] 三品种窗口均价 start=${windowStart} end=${todayStr}`);
+  console.log(`[窗口] 三品种均价 start=${windowStart} end=${todayStr}`);
 
-  // 并行拉布伦特 + WTI（阿曼无 EIA 现货品种，用布伦特均价 - 利差估算）
-  async function fetchProduct(product: string): Promise<Array<{ period: string; val: number }>> {
-    const params = new URLSearchParams({
-      api_key: EIA_KEY, frequency: "daily",
-      "data[0]": "value", "sort[0][column]": "period",
-      "sort[0][direction]": "asc", length: "15",
-      "facets[product][]": product,
-      start: windowStart, end: todayStr,
-    });
-    const resp = await fetch(`${EIA_BASE}?${params}`, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      signal: AbortSignal.timeout(12000),
-    });
-    if (!resp.ok) throw new Error(`EIA ${product} HTTP ${resp.status}`);
-    const json = await resp.json();
-    const rows = (json?.response?.data ?? []) as Array<{ period: string; value: string }>;
-    return rows
-      .map(r => ({ period: r.period, val: parseFloat(r.value) }))
-      .filter(r => r.val > 0)
-      .slice(0, 10);
-  }
-
-  const [brentRows, wtiRows] = await Promise.all([
-    fetchProduct("EPCBRENT"),
-    fetchProduct("EPCRWTI"),
+  // ── 1. 并行拉 FRED + AV（四路并行，不等待）──────────────────────────────
+  const [fredBrentRes, fredWtiRes, avBrentRes, avWtiRes] = await Promise.allSettled([
+    fetchFredSeries("DCOILBRENTEU", windowStart),
+    fetchFredSeries("DCOILWTICO",   windowStart),
+    fetchAvDaily("BRENT", windowStart),
+    fetchAvDaily("WTI",   windowStart),
   ]);
 
-  if (brentRows.length < 1) throw new Error("EIA 布伦特窗口数据为空");
+  const brentMap = new Map<string, number>();
+  const wtiMap   = new Map<string, number>();
 
-  // 各品种窗口均价
-  const avgBrent = +(brentRows.reduce((a, r) => a + r.val, 0) / brentRows.length).toFixed(2);
+  // FRED 优先（Platts Dated Brent，发改委参考口径）
+  if (fredBrentRes.status === "fulfilled") {
+    for (const r of fredBrentRes.value) brentMap.set(r.period, r.val);
+  } else console.warn("[窗口] FRED Brent 失败:", (fredBrentRes.reason as Error)?.message);
+  if (fredWtiRes.status === "fulfilled") {
+    for (const r of fredWtiRes.value) wtiMap.set(r.period, r.val);
+  } else console.warn("[窗口] FRED WTI 失败:", (fredWtiRes.reason as Error)?.message);
+
+  // AV 补充（不覆盖 FRED 已有值）
+  if (avBrentRes.status === "fulfilled") {
+    for (const r of avBrentRes.value) if (!brentMap.has(r.period)) brentMap.set(r.period, r.val);
+  } else console.warn("[窗口] AV Brent 失败:", (avBrentRes.reason as Error)?.message);
+  if (avWtiRes.status === "fulfilled") {
+    for (const r of avWtiRes.value) if (!wtiMap.has(r.period)) wtiMap.set(r.period, r.val);
+  } else console.warn("[窗口] AV WTI 失败:", (avWtiRes.reason as Error)?.message);
+
+  // EIA 直连兜底（仅在 FRED+AV 均为空时调用）
+  if (brentMap.size === 0) {
+    console.warn("[窗口] FRED+AV 均失败，降级 EIA 直连");
+    const makeEiaParams = (product: string) => new URLSearchParams({
+      api_key: EIA_KEY, frequency: "daily",
+      "data[0]": "value", "sort[0][column]": "period", "sort[0][direction]": "asc", length: "15",
+      "facets[product][]": product, start: windowStart, end: todayStr,
+    }).toString();
+    const [eiaB, eiaW] = await Promise.allSettled([
+      fetch(`${EIA_BASE}?${makeEiaParams("EPCBRENT")}`, { signal: AbortSignal.timeout(12000) }).then(r => r.json()),
+      fetch(`${EIA_BASE}?${makeEiaParams("EPCRWTI")}`,  { signal: AbortSignal.timeout(12000) }).then(r => r.json()),
+    ]);
+    if (eiaB.status === "fulfilled") {
+      for (const r of eiaB.value?.response?.data ?? []) {
+        const v = parseFloat(r.value); if (v > 0) brentMap.set(r.period, v);
+      }
+    }
+    if (eiaW.status === "fulfilled") {
+      for (const r of eiaW.value?.response?.data ?? []) {
+        const v = parseFloat(r.value); if (v > 0) wtiMap.set(r.period, v);
+      }
+    }
+  }
+  if (brentMap.size === 0) throw new Error("所有数据源均失败，无法获取 Brent 窗口数据");
+
+  // ── 2. 枚举窗口工作日（跳过今天），缺失日用实时盘价填充 ─────────────────
+  const windowDays: string[] = [];
+  const cur = new Date(windowStart + "T12:00:00Z");
+  const yest = new Date(todayStr + "T12:00:00Z");
+  yest.setUTCDate(yest.getUTCDate() - 1); // 不包含今天
+  while (cur <= yest) {
+    const ds = cur.toISOString().slice(0, 10);
+    if (isWorkday(ds)) windowDays.push(ds);
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  const effectiveDays = windowDays.slice(0, 10);
+
+  let fillCount = 0;
+  for (const day of effectiveDays) {
+    if (!brentMap.has(day) && realtimeBrent > 0) { brentMap.set(day, realtimeBrent); fillCount++; }
+    if (!wtiMap.has(day)   && realtimeWti   > 0)   wtiMap.set(day, realtimeWti);
+  }
+  if (fillCount > 0) console.log(`[窗口] 实时盘价填充 ${fillCount} 个缺失工作日（Brent=$${realtimeBrent} WTI=$${realtimeWti}）`);
+
+  // ── 3. 计算各品种窗口均价 ────────────────────────────────────────────────
+  const brentRows = effectiveDays.filter(d => brentMap.has(d)).map(d => brentMap.get(d)!);
+  const wtiRows   = effectiveDays.filter(d => wtiMap.has(d)).map(d => wtiMap.get(d)!);
+
+  if (brentRows.length === 0) throw new Error("窗口内无有效 Brent 数据");
+
+  const avgBrent = +(brentRows.reduce((a, v) => a + v, 0) / brentRows.length).toFixed(2);
   const avgWti   = wtiRows.length > 0
-    ? +(wtiRows.reduce((a, r) => a + r.val, 0) / wtiRows.length).toFixed(2)
-    : +(avgBrent - 2.5).toFixed(2);  // WTI 兜底：布伦特 - 2.5
+    ? +(wtiRows.reduce((a, v) => a + v, 0) / wtiRows.length).toFixed(2)
+    : +(avgBrent - 3.5).toFixed(2);
 
-  // 阿曼：布伦特窗口均价 - 实时盘价利差（历史均差约 1.5~2.5，取实时值）
-  const avgDubai = +(avgBrent - brentDubaiSpread).toFixed(2);
+  // Dubai/阿曼：WTI - 4.0（中质含硫品质折扣；Platts 实测 WTI/Dubai 利差通常 $2-6）
+  // 比 "Brent - 2.0" 准确得多——当 Brent/WTI 利差拉宽时，后者会严重高估 Dubai
+  const avgDubai = +(avgWti - 4.0).toFixed(2);
 
-  // 一揽子加权均价（布伦特:阿曼:米纳斯 = 4:3:3，米纳斯用WTI替代）
-  const avg10d = +((avgBrent * 4 + avgDubai * 3 + avgWti * 3) / 10).toFixed(2);
-
-  // 以布伦特的日期范围作为代表
-  const startDate = brentRows[0]?.period ?? windowStart;
-  const dataDate  = brentRows[brentRows.length - 1]?.period ?? todayStr;
+  const avg10d    = +((avgBrent * 4 + avgDubai * 3 + avgWti * 3) / 10).toFixed(2);
+  const startDate = effectiveDays.find(d => brentMap.has(d)) ?? windowStart;
+  const dataDate  = [...effectiveDays].reverse().find(d => brentMap.has(d)) ?? todayStr;
   const days      = brentRows.length;
 
-  console.log(`[EIA] 三品种窗口均价: 布伦特=$${avgBrent}(${days}天) 阿曼≈$${avgDubai}(利差${brentDubaiSpread}) WTI=$${avgWti}(${wtiRows.length}天) 一揽子=$${avg10d} ${startDate}→${dataDate}`);
+  console.log(`[窗口] 三品种均价: 布伦特=$${avgBrent}(${days}天) 阿曼≈$${avgDubai}(WTI-4.0) WTI=$${avgWti}(${wtiRows.length}天) 一揽子=$${avg10d} ${startDate}→${dataDate} 实时填充=${fillCount}天`);
   return { avg10d, dataDate, days, startDate, avgBrent, avgWti, avgDubai };
 }
 
@@ -845,7 +953,7 @@ serve(async (req: Request): Promise<Response> => {
     basketDubai = +(basketBrent - brentDiff).toFixed(2);
     basketMinas = +(basketBrent - 2.5).toFixed(2);  // WTI 历史均差约 -2.5
   } else {
-    const eiaRes = await fetchEiaWindowAvg(lastAdjustDate, brentDiff).catch(e => e);
+    const eiaRes = await fetchWindowAvg(lastAdjustDate, brent, wti).catch(e => e);
     if (!(eiaRes instanceof Error)) {
       avg10d         = eiaRes.avg10d;
       dataDate       = eiaRes.dataDate;
@@ -959,7 +1067,9 @@ serve(async (req: Request): Promise<Response> => {
     status: 1,
     message: `原油更新成功（税费联动+实时汇率${rmbSource === "realtime" ? rmbRate : "降级" + RMB_RATE_FALLBACK}）${trendUpdated ? "，联动走势预测" : ""}${isManualLocked ? "，均价已手动锁定" : ""}`,
     data: {
-      brent, wti, dubai, basketAvg, basketDays, basketStart, avg10d: effectiveAvg10d, lastCycleAvg,
+      brent, wti, dubai, basketAvg, basketDays, basketStart,
+      basketBrent, basketDubai, basketMinas,
+      avg10d: effectiveAvg10d, lastCycleAvg,
       base: calc.base, baseLabel: calc.label,
       changeRate: calc.rate, calcText: calc.text,
       estimatedDelta: calc.delta,
