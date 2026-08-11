@@ -2,7 +2,7 @@
   "expo": {
     "name": "车辆信息系统",
     "slug": "vehicle-app",
-    "version": "1.0.1472",
+    "version": "1.0.1473",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -23,7 +23,7 @@
         "backgroundColor": "#F4F5F7"
       },
       "predictiveBackGestureEnabled": false,
-      "versionCode": 1418,
+      "versionCode": 1473,
       "package": "com.miaoda.appd6jn0ph0piwx",
       "permissions": [
         "android.permission.CAMERA",
