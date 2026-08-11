@@ -2,7 +2,7 @@
   "expo": {
     "name": "车辆信息系统",
     "slug": "vehicle-app",
-    "version": "1.0.1471",
+    "version": "1.0.1472",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
