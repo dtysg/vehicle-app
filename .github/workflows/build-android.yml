@@ -210,17 +210,18 @@ jobs:
             NOTES="$(git log -1 --pretty=%s)"
           fi
 
-          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/app_versions" \
+          curl -sf -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/app_versions" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
             -H "Content-Type: application/json" \
-            -H "Prefer: resolution=merge-duplicates,return=minimal" \
+            -H "Prefer: return=representation" \
             -d "{
               \"version_name\": \"${{ steps.version.outputs.name }}\",
               \"version_code\": ${{ steps.version.outputs.code }},
               \"apk_url\": \"${{ steps.upload.outputs.apk_url }}\",
               \"release_notes\": \"${NOTES}\",
-              \"is_force\": false
+              \"is_force\": false,
+              \"published\": true
             }"
           echo "✅ 版本记录写入完成"
 
@@ -311,3 +312,4 @@ jobs:
             --message "${NOTES} (v${VERSION})" \
             --non-interactive
           echo "✅ OTA 热更新已推送，已安装旧版 APK 的用户下次启动将自动获取最新代码"
+
