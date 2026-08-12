@@ -1945,6 +1945,8 @@ export default function HomePage() {
           crudeDubai:     dbRow.crude_dubai     ? Number(dbRow.crude_dubai)      : undefined,
           crudeBasketDays:  dbRow.crude_basket_days  ? Number(dbRow.crude_basket_days)  : undefined,
           crudeBasketStart: dbRow.crude_basket_start ?? undefined,
+          // crude_avg10d 存的是发改委三品种正确加权均值，直接作为 crudeBasketAvg 使用
+          crudeBasketAvg:   dbRow.crude_avg10d  ? Number(dbRow.crude_avg10d)     : undefined,
           lastAdjustDate:   dbRow.last_adjust_date   ?? undefined,
           crudeAvg10d:    dbRow.crude_avg10d    ? Number(dbRow.crude_avg10d)     : undefined,
           crudeLastCycleAvg: dbRow.crude_last_cycle_avg ? Number(dbRow.crude_last_cycle_avg) : undefined,
@@ -5265,8 +5267,8 @@ export default function HomePage() {
           const dubai = oilPrice.crudeDubai ?? (brent > 0 ? +(brent - 1.5).toFixed(1) : 0);
           // 10日窗口均价（三品种）：EF返回时优先使用，否则降级到现货价估算
           const basketBrent = oilPrice.crudeBasketBrent ?? brent;
-          const basketDubai = oilPrice.crudeBasketDubai ?? dubai;
-          const basketMinas = oilPrice.crudeBasketMinas ?? (brent > 0 ? brent + 1.5 : wti);
+          const basketDubai = oilPrice.crudeBasketDubai ?? +(basketBrent - 8.5).toFixed(1);
+          const basketMinas = oilPrice.crudeBasketMinas ?? (brent > 0 ? +(basketDubai - 3.2).toFixed(1) : wti);
           // ── 一揽子油加权均价：布伦特:阿曼:米纳斯 = 4:3:3（发改委权重）
           // EF 已实时计算并回传 crudeBasketAvg；无则前端本地加权兜底
           const basketAvg = oilPrice.crudeBasketAvg
@@ -5516,7 +5518,7 @@ export default function HomePage() {
                             </Text>
                           </Pressable>
                           <Text style={{ color: 'rgba(255,255,255,0.20)', fontSize: 9, textAlign: 'center' }}>
-                            获取布伦特/阿曼/米纳斯实时报价{'\n'}自动测算国内调价幅度
+                            获取布伦特/迪拜/米纳斯实时报价{'\n'}自动测算国内调价幅度
                           </Text>
                         </>
                       )}
@@ -5529,7 +5531,7 @@ export default function HomePage() {
                 <View style={{ flexDirection: 'row', alignItems: 'stretch', gap: 5 }}>
                   {[
                     { label: '布伦特', val: basketBrent, unit: '10日均价', color: '#FB923C', border: 'rgba(251,146,60,0.30)', bg: 'rgba(251,146,60,0.09)', accent: true },
-                    { label: '阿曼',   val: basketDubai, unit: '10日均价', color: '#FDE047', border: 'rgba(250,204,21,0.25)', bg: 'rgba(250,204,21,0.07)', accent: false },
+                    { label: '迪拜',   val: basketDubai, unit: '10日均价', color: '#FDE047', border: 'rgba(250,204,21,0.25)', bg: 'rgba(250,204,21,0.07)', accent: false },
                     { label: '米纳斯', val: basketMinas, unit: '10日均价', color: '#C4B5FD', border: 'rgba(167,139,250,0.20)', bg: 'rgba(167,139,250,0.06)', accent: false },
                   ].map(({ label, val, unit, color, border, bg }) => (
                     <View key={label} style={{ flex: 1, backgroundColor: bg, borderRadius: 12,
@@ -5628,7 +5630,7 @@ export default function HomePage() {
                         <View style={{ flex: 1, gap: 5 }}>
                           {[
                             { label: '布伦特', val: basketBrent, color: '#FB923C', w: 0.4 },
-                            { label: '阿曼',   val: basketDubai, color: '#FDE047', w: 0.3 },
+                            { label: '迪拜',   val: basketDubai, color: '#FDE047', w: 0.3 },
                             { label: '米纳斯', val: basketMinas, color: '#C4B5FD', w: 0.3 },
                           ].map(({ label, val, color, w }) => (
                             <View key={label} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>

@@ -944,7 +944,12 @@ serve(async (req: Request): Promise<Response> => {
         const sBasketStart = lastAdjustDate
           ? nextWorkday(lastAdjustDate)
           : (cached.crude_basket_start || undefined);
-        const sBasketAvg = +((sBrent * 4 + sDubai * 3 + sWti * 3) / 10).toFixed(2);
+        const sCachedBasketBrent = sBrent;
+        const sCachedBasketDubai = +(sBrent - 8.5).toFixed(2);
+        const sCachedBasketMinas = +(sBrent - 11.7).toFixed(2);
+        const sBasketAvg = sAvg10d > 0
+          ? sAvg10d
+          : +((sCachedBasketBrent * 4 + sCachedBasketDubai * 3 + sCachedBasketMinas * 3) / 10).toFixed(2);
         const sCalc      = calcChange(sBrent, sLastCycle, sAvg10d, sRmbRate, reqCity, reqTempC, dbCoeff, sBasketAvg);
         // rmbSource：DB缓存值有效则标 'realtime'（来自上次真实 API），否则标 'fallback'
         const sRmbSource = Number(cached.crude_rmb_rate ?? 0) > 0 ? "realtime" : "fallback";
@@ -953,6 +958,9 @@ serve(async (req: Request): Promise<Response> => {
           data: {
             brent: cached.crude_brent, wti: cached.crude_wti, dubai: cached.crude_dubai,
             basketAvg: sBasketAvg,
+            basketBrent: sCachedBasketBrent,
+            basketDubai: sCachedBasketDubai,
+            basketMinas: sCachedBasketMinas,
             basketDays: sCachedDays || undefined,
             basketStart: sBasketStart,
             avg10d: sAvg10d,
@@ -1003,10 +1011,10 @@ serve(async (req: Request): Promise<Response> => {
     avg10dSource   = "manual_locked";
     eiaBasketDays  = Number(cached?.crude_basket_days ?? 0);
     eiaBasketStart = cached?.crude_basket_start ?? "";
-    // 手动锁定时三品种均价用实时利差推算
+    // 手动锁定时三品种均价用正确利差推算（迪拜≈Brent-8.5，米纳斯≈Brent-11.7）
     basketBrent = avg10d;
-    basketDubai = +(basketBrent - brentDiff).toFixed(2);
-    basketMinas = +(basketBrent - 2.5).toFixed(2);  // WTI 历史均差约 -2.5
+    basketDubai = +(avg10d - 8.5).toFixed(2);
+    basketMinas = +(avg10d - 11.7).toFixed(2);
   } else {
     const eiaRes = await fetchWindowAvg(lastAdjustDate, brent, wti).catch(e => e);
     if (!(eiaRes instanceof Error)) {
@@ -1023,8 +1031,8 @@ serve(async (req: Request): Promise<Response> => {
       // EIA失败时，一揽子三品种直接用实时盘价（而非旧的avg10d缓存）
       // 这样 basketAvg 仍然反映当前市场价，不会因历史缓存拉偏测算结果
       basketBrent = brent;
-      basketDubai = dubai > 0 ? dubai : +(brent - brentDiff).toFixed(2);
-      basketMinas = wti > 0 ? wti : +(brent - 2.5).toFixed(2);
+      basketDubai = +(brent - 8.5).toFixed(2);   // 迪拜现货约 Brent-8.5
+      basketMinas = +(brent - 11.7).toFixed(2);  // 米纳斯约 Brent-11.7（迪拜-3.2）
       // avg10d 降级：优先DB缓存（若合理），否则用实时brent
       const cachedVal = Number(cached?.crude_avg10d ?? 0);
       // 缓存值与实时盘价偏差超过15%时视为过期，直接用实时盘价
