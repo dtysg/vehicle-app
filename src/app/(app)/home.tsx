@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Polyline, Circle, Line, Text as SvgText, Defs, LinearGradient as SvgLinearGradient, Stop, Polygon } from 'react-native-svg';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { appEvents, EVT_OIL_IMPORTED } from '@/lib/events';
+import { nextWorkday, countWorkdays } from '@/lib/utils';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -1975,6 +1976,14 @@ export default function HomePage() {
           if (parsed.crudeLastCycleAvgLocked && (parsed.crudeLastCycleManual ?? 0) > 0) {
             parsed.crudeLastCycleAvg = parsed.crudeLastCycleManual;
           }
+          // 防御：后端旧实例可能把窗口回写到旧日期，前端显示时强制校正为调价日次日
+          if (parsed.lastAdjustDate && /^\d{4}-\d{2}-\d{2}$/.test(parsed.lastAdjustDate) && parsed.crudeBasketStart) {
+            const expected = nextWorkday(parsed.lastAdjustDate);
+            if (parsed.crudeBasketStart < expected) {
+              parsed.crudeBasketStart = expected;
+              parsed.crudeBasketDays = countWorkdays(expected, new Date().toISOString().slice(0, 10));
+            }
+          }
           return parsed;
         });
         setOilCity(cityKey || city);
@@ -2090,7 +2099,7 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trendForceLoading, oilCity]);
 
-  // ── 原油数据刷新（调用 oilprice-crude EF）──
+  // ── 原油数据刷新（调用 oilprice-crude-v2 EF）──
   const [crudeForceLoading, setCrudeForceLoading] = useState(false);
   const [crudeCollapsed, setCrudeCollapsed] = useState(true); // 原油卡默认折叠
   const [crudeForceResult, setCrudeForceResult] = useState<string>('');
@@ -2100,7 +2109,7 @@ export default function HomePage() {
     setCrudeForceLoading(force);
     setCrudeForceResult('');
     try {
-      const { data, error } = await supabase.functions.invoke('oilprice-crude', {
+      const { data, error } = await supabase.functions.invoke('oilprice-crude-v2', {
         body: {
           force,
           city:  oilCity,
@@ -2129,6 +2138,19 @@ export default function HomePage() {
           return deltaVal > 0 ? `预计上调 ${s}${Number(v).toFixed(2)}元/升（92#）`
                               : `预计下调 ${s}${Number(v).toFixed(2)}元/升（92#）`;
         };
+        // 防御：若后端返回了旧周期窗口（早于调价日次日），则丢弃该次响应，避免一刷新就回退
+        const isStaleBasket = (() => {
+          if (!data.data?.basketStart || !data.data?.basketDays) return false;
+          const lastAdj = data.data?.lastAdjustDate ?? oilPrice?.lastAdjustDate ?? '';
+          if (!lastAdj || !/^\d{4}-\d{2}-\d{2}$/.test(lastAdj)) return false;
+          const expected = nextWorkday(lastAdj);
+          return (data.data?.basketStart ?? '') < expected;
+        })();
+        if (isStaleBasket) {
+          console.warn('[原油] 后端返回旧窗口，忽略本次响应', data.data?.basketStart, '期望>=', nextWorkday(data.data?.lastAdjustDate ?? ''));
+          if (force) setCrudeForceResult('⚠️ 后端仍有旧实例在跑，请稍后再刷新');
+          return;
+        }
         setOilPrice(prev => {
           if (!prev) return prev;
           const isLocked = prev.crudeAvg10dLocked || data.data?.isManualLocked;
@@ -2178,6 +2200,12 @@ export default function HomePage() {
         }
       } else if (data?.skipped) {
         if (data?.data) {
+          const sLastAdj = data.data?.lastAdjustDate ?? oilPrice?.lastAdjustDate ?? '';
+          const sBasketStart = data.data?.basketStart ?? '';
+          if (sLastAdj && /^\d{4}-\d{2}-\d{2}$/.test(sLastAdj) && sBasketStart && sBasketStart < nextWorkday(sLastAdj)) {
+            console.warn('[原油] skipped分支返回旧窗口，忽略', sBasketStart, '期望>=', nextWorkday(sLastAdj));
+            return;
+          }
           const sDeltaVal    = data.data?.estimatedDelta ?? 0;
           const sWillTrigger = data.data?.willTrigger    ?? false;
           const sGrades      = data.data?.grades         ?? [];
@@ -2243,9 +2271,11 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crudeForceLoading]);
 
-  // ── 首次加载时静默获取原油价格（在函数定义后，保证引用有效）──
+  // ── 首次加载时静默获取原油价格（先读 DB，再调 EF，让防御检查有 lastAdjustDate 可用）──
   React.useEffect(() => {
-    handleFetchCrudePrice(false);
+    fetchOilPrice(oilCityRef.current).then(() => {
+      handleFetchCrudePrice(false);
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2902,7 +2932,7 @@ export default function HomePage() {
           if (isTianjinRow) {
             fetchOilPrice(oilCityRef.current);
           }
-          // crude_updated_at 有值说明 oilprice-crude EF 刚写完 → 同步刷新测算卡
+          // crude_updated_at 有值说明 oilprice-crude-v2 EF 刚写完 → 同步刷新测算卡
           if ((isCurrentCityRow || isTianjinRow) && (payload.new as any)?.crude_updated_at) {
             // 延迟 300ms 确保 DB 事务完全提交后再读
             setTimeout(() => { handleFetchCrudePrice(false); }, 300);
