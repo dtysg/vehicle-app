@@ -1814,6 +1814,7 @@ export default function HomePage() {
   const [oilHistory, setOilHistory] = useState<OilHistoryItem[]>([]);
   const [oilHistoryExpanded, setOilHistoryExpanded] = useState(false);
   const [oilHistoryLoading, setOilHistoryLoading] = useState(false);
+  const [oilCardCollapsed, setOilCardCollapsed] = useState(true); // 油价卡默认折叠
   // 模拟变价产生的临时走势点（内存级，不写数据库；exitSimulMode 时清空）
   const [oilHistorySimul, setOilHistorySimul] = useState<OilHistoryItem | null>(null);
   // 油价卡内容区实际宽度（onLayout 动态测量，解决 flex:1 布局下无法推算宽度的问题）
@@ -4815,7 +4816,7 @@ export default function HomePage() {
                 start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
               style={{ paddingHorizontal: 10, paddingTop: 10, paddingBottom: 10, gap: 7 }}
               >
-                {/* 顶部：城市选择 + 刷新 */}
+                {/* 顶部：城市选择 + 折叠 + 刷新 */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <Pressable
                     onPress={() => setOilCityModalVisible(true)}
@@ -4825,30 +4826,41 @@ export default function HomePage() {
                     <Text style={{ color: '#FCD34D', fontSize: 12, fontWeight: '800', letterSpacing: 0.3 }}>{oilCity}</Text>
                     <ChevronDown size={10} color="rgba(251,191,36,0.7)" />
                   </Pressable>
-                  {oilLoading
-                    ? <ActivityIndicator size="small" color="rgba(255,191,36,0.7)" style={{ transform: [{ scale: 0.65 }] }} />
-                    : (
-                      <Pressable
-                        onPress={async () => {
-                          if (oilRefreshing) return;
-                          setOilRefreshing(true);
-                          await fetchOilPrice(oilCityRef.current);
-                          setOilRefreshing(false);
-                        }}
-                        style={{ width: 26, height: 26, borderRadius: 8, alignItems: 'center', justifyContent: 'center',
-                          backgroundColor: 'rgba(251,191,36,0.10)', borderWidth: 1, borderColor: 'rgba(251,191,36,0.22)' }}
-                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                      >
-                        <RefreshCw
-                          size={12}
-                          color={oilRefreshing ? '#FBBF24' : 'rgba(255,255,255,0.40)'}
-                        />
-                      </Pressable>
-                    )
-                  }
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Pressable
+                      onPress={() => setOilCardCollapsed(v => !v)}
+                      style={{ width: 26, height: 26, borderRadius: 8, alignItems: 'center', justifyContent: 'center',
+                        backgroundColor: 'rgba(251,191,36,0.10)', borderWidth: 1, borderColor: 'rgba(251,191,36,0.22)' }}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <ChevronDown size={12} color="rgba(255,255,255,0.55)" style={{ transform: [{ rotate: oilCardCollapsed ? '0deg' : '180deg' }] }} />
+                    </Pressable>
+                    {oilLoading
+                      ? <ActivityIndicator size="small" color="rgba(255,191,36,0.7)" style={{ transform: [{ scale: 0.65 }] }} />
+                      : (
+                        <Pressable
+                          onPress={async () => {
+                            if (oilRefreshing) return;
+                            setOilRefreshing(true);
+                            await fetchOilPrice(oilCityRef.current);
+                            setOilRefreshing(false);
+                          }}
+                          style={{ width: 26, height: 26, borderRadius: 8, alignItems: 'center', justifyContent: 'center',
+                            backgroundColor: 'rgba(251,191,36,0.10)', borderWidth: 1, borderColor: 'rgba(251,191,36,0.22)' }}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        >
+                          <RefreshCw
+                            size={12}
+                            color={oilRefreshing ? '#FBBF24' : 'rgba(255,255,255,0.40)'}
+                          />
+                        </Pressable>
+                      )
+                    }
+                  </View>
                 </View>
 
 
+                {!oilCardCollapsed && (<>
                 {/* ── 油品价格四格（大字版，模拟模式下隐藏，数据已显示在底部对话框）── */}
                 <View>
                   {oilLoading && !oilPrice ? (
@@ -5053,6 +5065,7 @@ export default function HomePage() {
                     </Pressable>
                   </View>
                 )}
+                </>)}
 
 
               </LinearGradient>
