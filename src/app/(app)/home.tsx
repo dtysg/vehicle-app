@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Polyline, Circle, Line, Text as SvgText, Defs, LinearGradient as SvgLinearGradient, Stop, Polygon } from 'react-native-svg';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { appEvents, EVT_OIL_IMPORTED } from '@/lib/events';
+import { nextWorkday, countWorkdays } from '@/lib/utils';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -1945,8 +1946,6 @@ export default function HomePage() {
           crudeDubai:     dbRow.crude_dubai     ? Number(dbRow.crude_dubai)      : undefined,
           crudeBasketDays:  dbRow.crude_basket_days  ? Number(dbRow.crude_basket_days)  : undefined,
           crudeBasketStart: dbRow.crude_basket_start ?? undefined,
-          // crude_avg10d 存的是发改委三品种正确加权均值，直接作为 crudeBasketAvg 使用
-          crudeBasketAvg:   dbRow.crude_avg10d  ? Number(dbRow.crude_avg10d)     : undefined,
           lastAdjustDate:   dbRow.last_adjust_date   ?? undefined,
           crudeAvg10d:    dbRow.crude_avg10d    ? Number(dbRow.crude_avg10d)     : undefined,
           crudeLastCycleAvg: dbRow.crude_last_cycle_avg ? Number(dbRow.crude_last_cycle_avg) : undefined,
@@ -1976,6 +1975,14 @@ export default function HomePage() {
           // 上期均价锁定保护：DB 字段 crude_last_cycle_locked=true 时，用手动值覆盖读回值
           if (parsed.crudeLastCycleAvgLocked && (parsed.crudeLastCycleManual ?? 0) > 0) {
             parsed.crudeLastCycleAvg = parsed.crudeLastCycleManual;
+          }
+          // 防御：后端旧实例可能把窗口回写到旧日期，前端显示时强制校正为调价日次日
+          if (parsed.lastAdjustDate && /^\d{4}-\d{2}-\d{2}$/.test(parsed.lastAdjustDate) && parsed.crudeBasketStart) {
+            const expected = nextWorkday(parsed.lastAdjustDate);
+            if (parsed.crudeBasketStart < expected) {
+              parsed.crudeBasketStart = expected;
+              parsed.crudeBasketDays = countWorkdays(expected, new Date().toISOString().slice(0, 10));
+            }
           }
           return parsed;
         });
@@ -2092,7 +2099,7 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trendForceLoading, oilCity]);
 
-  // ── 原油数据刷新（调用 oilprice-crude EF）──
+  // ── 原油数据刷新（调用 oilprice-crude-v2 EF）──
   const [crudeForceLoading, setCrudeForceLoading] = useState(false);
   const [crudeCollapsed, setCrudeCollapsed] = useState(true); // 原油卡默认折叠
   const [crudeForceResult, setCrudeForceResult] = useState<string>('');
@@ -2102,7 +2109,7 @@ export default function HomePage() {
     setCrudeForceLoading(force);
     setCrudeForceResult('');
     try {
-      const { data, error } = await supabase.functions.invoke('oilprice-crude', {
+      const { data, error } = await supabase.functions.invoke('oilprice-crude-v2', {
         body: {
           force,
           city:  oilCity,
@@ -2131,6 +2138,19 @@ export default function HomePage() {
           return deltaVal > 0 ? `预计上调 ${s}${Number(v).toFixed(2)}元/升（92#）`
                               : `预计下调 ${s}${Number(v).toFixed(2)}元/升（92#）`;
         };
+        // 防御：若后端返回了旧周期窗口（早于调价日次日），则丢弃该次响应，避免一刷新就回退
+        const isStaleBasket = (() => {
+          if (!data.data?.basketStart || !data.data?.basketDays) return false;
+          const lastAdj = data.data?.lastAdjustDate ?? oilPrice?.lastAdjustDate ?? '';
+          if (!lastAdj || !/^\d{4}-\d{2}-\d{2}$/.test(lastAdj)) return false;
+          const expected = nextWorkday(lastAdj);
+          return (data.data?.basketStart ?? '') < expected;
+        })();
+        if (isStaleBasket) {
+          console.warn('[原油] 后端返回旧窗口，忽略本次响应', data.data?.basketStart, '期望>=', nextWorkday(data.data?.lastAdjustDate ?? ''));
+          if (force) setCrudeForceResult('⚠️ 后端仍有旧实例在跑，请稍后再刷新');
+          return;
+        }
         setOilPrice(prev => {
           if (!prev) return prev;
           const isLocked = prev.crudeAvg10dLocked || data.data?.isManualLocked;
@@ -2180,6 +2200,12 @@ export default function HomePage() {
         }
       } else if (data?.skipped) {
         if (data?.data) {
+          const sLastAdj = data.data?.lastAdjustDate ?? oilPrice?.lastAdjustDate ?? '';
+          const sBasketStart = data.data?.basketStart ?? '';
+          if (sLastAdj && /^\d{4}-\d{2}-\d{2}$/.test(sLastAdj) && sBasketStart && sBasketStart < nextWorkday(sLastAdj)) {
+            console.warn('[原油] skipped分支返回旧窗口，忽略', sBasketStart, '期望>=', nextWorkday(sLastAdj));
+            return;
+          }
           const sDeltaVal    = data.data?.estimatedDelta ?? 0;
           const sWillTrigger = data.data?.willTrigger    ?? false;
           const sGrades      = data.data?.grades         ?? [];
@@ -2245,9 +2271,11 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crudeForceLoading]);
 
-  // ── 首次加载时静默获取原油价格（在函数定义后，保证引用有效）──
+  // ── 首次加载时静默获取原油价格（先读 DB，再调 EF，让防御检查有 lastAdjustDate 可用）──
   React.useEffect(() => {
-    handleFetchCrudePrice(false);
+    fetchOilPrice(oilCityRef.current).then(() => {
+      handleFetchCrudePrice(false);
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2785,8 +2813,8 @@ export default function HomePage() {
     const nextAdj  = oilPrice.nextAdjustDate ?? '';
     const updateDt = oilPrice.updateDate     ?? '';
 
-    // 精准调价窗口：今日 > 调价日（即调价日当天24:00已过，次日0:00起开窗），且本期价格数据尚未更新
-    // 国内成品油价格在调价日24:00生效，因此窗口从次日0:00开启
+    // 精准调价窗口：调价日当日24:00（即当日结束、次日0:00）已过，且本期价格数据尚未更新
+    // 国内成品油价格在调价日当日24:00生效，因此窗口在当日24:00后开启
     const isAdjustWindow = nextAdj && todayStr > nextAdj && updateDt < nextAdj;
     if (!isAdjustWindow) return;
     // 模拟模式期间屏蔽真实 EF 自动刷新，防止覆盖模拟数据
@@ -2837,7 +2865,7 @@ export default function HomePage() {
     const nextAdj  = oilPrice.nextAdjustDate;
     const updateDt = oilPrice.updateDate ?? '';
 
-    // 窗口条件：今日 > 调价日（调价日24:00已过）且本期价格尚未更新
+    // 窗口条件：调价日当日24:00已过（今日已进入次日）且本期价格尚未更新
     const isWindow = todayStr > nextAdj && updateDt < nextAdj;
     if (!isWindow || simulModeRef.current) {
       // 窗口未开或模拟模式 → 清除旧轮询
@@ -2904,7 +2932,7 @@ export default function HomePage() {
           if (isTianjinRow) {
             fetchOilPrice(oilCityRef.current);
           }
-          // crude_updated_at 有值说明 oilprice-crude EF 刚写完 → 同步刷新测算卡
+          // crude_updated_at 有值说明 oilprice-crude-v2 EF 刚写完 → 同步刷新测算卡
           if ((isCurrentCityRow || isTianjinRow) && (payload.new as any)?.crude_updated_at) {
             // 延迟 300ms 确保 DB 事务完全提交后再读
             setTimeout(() => { handleFetchCrudePrice(false); }, 300);
@@ -4590,8 +4618,8 @@ export default function HomePage() {
         {/* ── 分割光线 ── */}
         <GradDivider colors={['transparent', 'rgba(96,165,250,0.6)', 'transparent']} marginBottom={4} />
 
-        {/* ── 天气 + 油价 左右并排（无油价数据时天气全宽） ── */}
-        <Animated.View entering={FadeInDown.delay(180).duration(260)} style={{ flexDirection: 'row', gap: 6, marginBottom: 6, alignItems: 'flex-start' }}>
+        {/* ── 天气 + 油价 上下排列（无油价数据时天气全宽） ── */}
+        <Animated.View entering={FadeInDown.delay(180).duration(260)} style={{ flexDirection: 'column', gap: 8, marginBottom: 6, alignItems: 'stretch' }}>
 
           {/* ── 天气卡 ── */}
           <View style={{ flex: 1, position: 'relative' }}>
@@ -5267,8 +5295,8 @@ export default function HomePage() {
           const dubai = oilPrice.crudeDubai ?? (brent > 0 ? +(brent - 1.5).toFixed(1) : 0);
           // 10日窗口均价（三品种）：EF返回时优先使用，否则降级到现货价估算
           const basketBrent = oilPrice.crudeBasketBrent ?? brent;
-          const basketDubai = oilPrice.crudeBasketDubai ?? +(basketBrent - 8.5).toFixed(1);
-          const basketMinas = oilPrice.crudeBasketMinas ?? (brent > 0 ? +(basketDubai - 3.2).toFixed(1) : wti);
+          const basketDubai = oilPrice.crudeBasketDubai ?? dubai;
+          const basketMinas = oilPrice.crudeBasketMinas ?? (brent > 0 ? brent + 1.5 : wti);
           // ── 一揽子油加权均价：布伦特:阿曼:米纳斯 = 4:3:3（发改委权重）
           // EF 已实时计算并回传 crudeBasketAvg；无则前端本地加权兜底
           const basketAvg = oilPrice.crudeBasketAvg
@@ -5518,7 +5546,7 @@ export default function HomePage() {
                             </Text>
                           </Pressable>
                           <Text style={{ color: 'rgba(255,255,255,0.20)', fontSize: 9, textAlign: 'center' }}>
-                            获取布伦特/迪拜/米纳斯实时报价{'\n'}自动测算国内调价幅度
+                            获取布伦特/阿曼/米纳斯实时报价{'\n'}自动测算国内调价幅度
                           </Text>
                         </>
                       )}
@@ -5531,7 +5559,7 @@ export default function HomePage() {
                 <View style={{ flexDirection: 'row', alignItems: 'stretch', gap: 5 }}>
                   {[
                     { label: '布伦特', val: basketBrent, unit: '10日均价', color: '#FB923C', border: 'rgba(251,146,60,0.30)', bg: 'rgba(251,146,60,0.09)', accent: true },
-                    { label: '迪拜',   val: basketDubai, unit: '10日均价', color: '#FDE047', border: 'rgba(250,204,21,0.25)', bg: 'rgba(250,204,21,0.07)', accent: false },
+                    { label: '阿曼',   val: basketDubai, unit: '10日均价', color: '#FDE047', border: 'rgba(250,204,21,0.25)', bg: 'rgba(250,204,21,0.07)', accent: false },
                     { label: '米纳斯', val: basketMinas, unit: '10日均价', color: '#C4B5FD', border: 'rgba(167,139,250,0.20)', bg: 'rgba(167,139,250,0.06)', accent: false },
                   ].map(({ label, val, unit, color, border, bg }) => (
                     <View key={label} style={{ flex: 1, backgroundColor: bg, borderRadius: 12,
@@ -5630,7 +5658,7 @@ export default function HomePage() {
                         <View style={{ flex: 1, gap: 5 }}>
                           {[
                             { label: '布伦特', val: basketBrent, color: '#FB923C', w: 0.4 },
-                            { label: '迪拜',   val: basketDubai, color: '#FDE047', w: 0.3 },
+                            { label: '阿曼',   val: basketDubai, color: '#FDE047', w: 0.3 },
                             { label: '米纳斯', val: basketMinas, color: '#C4B5FD', w: 0.3 },
                           ].map(({ label, val, color, w }) => (
                             <View key={label} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
@@ -7326,7 +7354,7 @@ export default function HomePage() {
         const todayStr = `${todayLocal.getFullYear()}-${String(todayLocal.getMonth()+1).padStart(2,'0')}-${String(todayLocal.getDate()).padStart(2,'0')}`;
         const nextAdj  = oilPrice.nextAdjustDate ?? '';
         const updateDt = oilPrice.updateDate ?? '';
-        // 调价日24:00后（即次日0:00起）才开窗，与 triggerOilPriceBackgroundUpdate 逻辑一致
+        // 调价日当日24:00后（即次日0:00起）才开窗，与 triggerOilPriceBackgroundUpdate 逻辑一致
         const isWindowOpen = nextAdj && todayStr > nextAdj && updateDt < nextAdj;
         // 颜色主题（模拟模式优先：紫色主题；调价窗口：橙色；常态：蓝色）
         const isSimul     = oilPrice.isSimul ?? false;
