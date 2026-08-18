@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* 工业理性风：浅灰底 + 效率蓝主色 */
+    --background: 220 14% 96%;        /* #F4F5F7 浅灰背景 */
+    --foreground: 213 31% 15%;        /* #1A2332 深色文字 */
+    --card: 0 0% 100%;                /* 纯白卡片 */
+    --card-foreground: 213 31% 15%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 213 31% 15%;
+    --primary: 220 100% 40%;          /* #0052CC 效率蓝 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 14% 90%;         /* 浅蓝灰 */
+    --secondary-foreground: 213 31% 15%;
+    --muted: 220 14% 90%;
+    --muted-foreground: 213 15% 45%;
+    --accent: 25 100% 59%;            /* #FF5630 警告橙 */
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 220 14% 88%;
+    --input: 220 14% 88%;
+    --ring: 220 100% 40%;
+    --radius: 0.125rem;               /* 2px 微圆角 */
+  }
+
+  .dark {
+    --background: 213 31% 10%;
+    --foreground: 220 14% 96%;
+    --card: 213 31% 13%;
+    --card-foreground: 220 14% 96%;
+    --popover: 213 31% 13%;
+    --popover-foreground: 220 14% 96%;
+    --primary: 220 100% 55%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 213 31% 18%;
+    --secondary-foreground: 220 14% 96%;
+    --muted: 213 31% 18%;
+    --muted-foreground: 220 14% 63%;
+    --accent: 25 100% 59%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 213 31% 20%;
+    --input: 213 31% 20%;
+    --ring: 220 100% 55%;
+  }
+}

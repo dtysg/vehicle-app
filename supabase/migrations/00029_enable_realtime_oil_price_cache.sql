@@ -1,0 +1,1 @@
+alter publication supabase_realtime add table oil_price_cache;

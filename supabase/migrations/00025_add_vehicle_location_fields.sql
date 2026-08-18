@@ -1,0 +1,7 @@
+-- 给三张车辆表添加经纬度字段（可为空，手动录入或 GPS 定位）
+ALTER TABLE gasoline_vehicles ADD COLUMN IF NOT EXISTS latitude  DOUBLE PRECISION;
+ALTER TABLE gasoline_vehicles ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
+ALTER TABLE diesel_vehicles   ADD COLUMN IF NOT EXISTS latitude  DOUBLE PRECISION;
+ALTER TABLE diesel_vehicles   ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
+ALTER TABLE lng_vehicles      ADD COLUMN IF NOT EXISTS latitude  DOUBLE PRECISION;
+ALTER TABLE lng_vehicles      ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;

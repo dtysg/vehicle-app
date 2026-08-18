@@ -1,0 +1,8 @@
+metro.config.js
+babel.config.js
+.pnpmfile.cjs
+output/**
+supabase/**
+src/components/ui/**
+.skills/**
+node_modules/**
