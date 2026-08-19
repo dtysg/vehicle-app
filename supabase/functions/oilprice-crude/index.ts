@@ -481,8 +481,8 @@ async function fetchYahooHistory(
   throw lastErr ?? new Error(`Yahoo ${symbol} 历史数据获取失败`);
 }
 
-async function fetchCnbcRealtime(): Promise<{ brent: number; wti: number; dubai: number; brentTime: string }> {
-  // CNBC 主源 + Yahoo 补充并行抓取
+async function fetchRealtime(): Promise<{ brent: number; wti: number; dubai: number; brentTime: string }> {
+  // 主源 CNBC + Yahoo 并行抓取（实时/盘中价，最新鲜）
   const [cnbcRes, yahooRes] = await Promise.allSettled([
     fetch(CNBC_URL, {
       headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://www.cnbc.com" },
@@ -518,7 +518,14 @@ async function fetchCnbcRealtime(): Promise<{ brent: number; wti: number; dubai:
     console.warn("[原油] Yahoo失败:", yahooRes.reason);
   }
 
-  if (brent <= 0) throw new Error("CNBC+Yahoo Brent 均无效");
+  // 兜底：CNBC + Yahoo 均失败时，用 FRED 官方现货价（极稳定，滞后约 1 交易日）
+  if (brent <= 0) {
+    console.warn("[原油] CNBC+Yahoo 均失败，降级 FRED 官方现货价");
+    const fred = await fetchFredRealtime();
+    if (fred.brent > 0) { brent = fred.brent; brentTime = "FRED现货"; }
+    if (wti <= 0 && fred.wti > 0) wti = fred.wti;
+  }
+  if (brent <= 0) throw new Error("全部数据源(CNBC/Yahoo/FRED) Brent 均无效");
   // WTI 仍无效则固定利差降级
   if (wti <= 0) { wti = +(brent - 2.5).toFixed(2); console.warn(`[原油] WTI全源失败，降级brent-2.5=$${wti}`); }
   // 阿曼：CNBC @MCO.1 长期不返回，用 brent-2.0（历史 Brent/Oman 利差约 1.5-2.5，均值约2.0）
@@ -554,6 +561,23 @@ async function fetchFredSeries(
   }
   console.log(`[FRED] ${seriesId}: ${rows.length} 行 from ${startDate}`);
   return rows.slice(-15);
+}
+
+/**
+ * FRED 最新现货价（兜底实时源）——政府数据，极稳定、无反爬、无限流
+ * DCOILBRENTEU = Brent 现货，DCOILWTICO = WTI 现货（滞后约 1 个交易日）
+ */
+async function fetchFredRealtime(): Promise<{ brent: number; wti: number }> {
+  const start = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const [bRes, wRes] = await Promise.allSettled([
+    fetchFredSeries("DCOILBRENTEU", start),
+    fetchFredSeries("DCOILWTICO", start),
+  ]);
+  let brent = 0, wti = 0;
+  if (bRes.status === "fulfilled" && bRes.value.length) brent = bRes.value[bRes.value.length - 1].val;
+  if (wRes.status === "fulfilled" && wRes.value.length) wti = wRes.value[wRes.value.length - 1].val;
+  console.log(`[FRED] 实时兜底: Brent=$${brent} WTI=$${wti}`);
+  return { brent, wti };
 }
 
 /** Alpha Vantage commodity daily — EIA 同源但更新更快（500次/天免费） */
@@ -1014,22 +1038,22 @@ serve(async (req: Request): Promise<Response> => {
       }
     }
 
-  // ── 三路并行：CNBC实时价 + EIA三品种窗口均价 + 实时汇率 ──
+  // ── 三路并行：实时盘价(CNBC+Yahoo+FRED兜底) + EIA三品种窗口均价 + 实时汇率 ──
   const integKey = Deno.env.get("INTEGRATIONS_API_KEY") ?? "";
-  // 先拿 CNBC 实时盘价，用实时利差传给 EIA（阿曼用布伦特-利差推算）
+  // 先拿实时盘价，用实时利差传给 EIA（阿曼用布伦特-利差推算）
   const [cnbcRes, rmbRes] = await Promise.allSettled([
-    fetchCnbcRealtime(),
+    fetchRealtime(),
     fetchRmbRate(integKey),
   ]);
 
-  // CNBC 实时价（主数据源，失败则整体中止）
+  // 实时价（主数据源，CNBC/Yahoo/FRED 全失败才中止）
   if (cnbcRes.status === "rejected") {
-    console.error("[原油] CNBC失败:", cnbcRes.reason);
+    console.error("[原油] 实时价获取失败:", cnbcRes.reason);
     return new Response(JSON.stringify({ status: -1, error: `实时价获取失败: ${cnbcRes.reason}` }),
       { status: 503, headers: { "Content-Type": "application/json", ...CORS } });
   }
   const { brent, wti, dubai, brentTime } = cnbcRes.value;
-  console.log(`[原油] CNBC Brent=$${brent} WTI=$${wti} 阿曼=$${dubai} time=${brentTime}`);
+  console.log(`[原油] 实时 Brent=$${brent} WTI=$${wti} 阿曼=$${dubai} time=${brentTime}`);
 
   // 实时 Brent/阿曼 利差（用于 EIA 窗口三品种推算）
   const brentDiff = brent > 0 && dubai > 0 ? +(brent - dubai).toFixed(2) : 2.0;
