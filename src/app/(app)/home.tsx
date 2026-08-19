@@ -2100,7 +2100,7 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trendForceLoading, oilCity]);
 
-  // ── 原油数据刷新（调用 oilprice-crude-v2 EF）──
+  // ── 原油数据刷新（调用 oilprice-crude EF）──
   const [crudeForceLoading, setCrudeForceLoading] = useState(false);
   const [crudeCollapsed, setCrudeCollapsed] = useState(true); // 原油卡默认折叠
   const [crudeForceResult, setCrudeForceResult] = useState<string>('');
@@ -2110,7 +2110,7 @@ export default function HomePage() {
     setCrudeForceLoading(force);
     setCrudeForceResult('');
     try {
-      const { data, error } = await supabase.functions.invoke('oilprice-crude-v2', {
+      const { data, error } = await supabase.functions.invoke('oilprice-crude', {
         body: {
           force,
           city:  oilCity,
@@ -2933,7 +2933,7 @@ export default function HomePage() {
           if (isTianjinRow) {
             fetchOilPrice(oilCityRef.current);
           }
-          // crude_updated_at 有值说明 oilprice-crude-v2 EF 刚写完 → 同步刷新测算卡
+          // crude_updated_at 有值说明 oilprice-crude EF 刚写完 → 同步刷新测算卡
           if ((isCurrentCityRow || isTianjinRow) && (payload.new as any)?.crude_updated_at) {
             // 延迟 300ms 确保 DB 事务完全提交后再读
             setTimeout(() => { handleFetchCrudePrice(false); }, 300);
