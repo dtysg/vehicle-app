@@ -81,8 +81,8 @@ serve(async (req) => {
   const headers = { "Content-Type": "application/json", ...CORS };
 
   try {
-    // 取近 12 个自然日，保证有足够工作日数据（FRED 滞后约1交易日）
-    const startDate = new Date(Date.now() - 12 * 86400_000).toISOString().slice(0, 10);
+    // 取近 15 个自然日，保证有足够交易日（需~9个交易日才能算出连续5个MA5）
+    const startDate = new Date(Date.now() - 15 * 86400_000).toISOString().slice(0, 10);
 
     const [brentRes, wtiRes] = await Promise.allSettled([
       fetchFredSeries("DCOILBRENTEU", startDate),
@@ -93,49 +93,52 @@ serve(async (req) => {
     const wtiRows   = wtiRes.status === "fulfilled" ? wtiRes.value : [];
     if (brentRows.length === 0) throw new Error("FRED Brent 数据获取失败");
 
-    // 取最近 5 个有数据的工作日（Brent 为主）
     const brentMap = new Map(brentRows.map(r => [r.period, r.val]));
     const wtiMap   = new Map(wtiRows.map(r => [r.period, r.val]));
-    const dates = [...brentMap.keys()].sort().slice(-5);
+    // 取最近 9 个有数据的工作日（升序），用于计算连续 5 个滚动 MA5
+    const dates = [...brentMap.keys()].sort().slice(-9);
+    const brentVals = dates.map(d => brentMap.get(d)!);
 
-    const days = dates.map((date) => {
-      const brent = brentMap.get(date)!;
-      const wti   = wtiMap.get(date) ?? +(brent - 3).toFixed(2); // WTI 缺失时用 Brent-3 兜底
-      const oman  = +(brent + OMAN_BASIS).toFixed(2);
-      const minas = +(oman + MINAS_BASIS).toFixed(2);
-      return { date, brent, wti, oman, minas };
-    });
+    // 滚动 5 日均价：对每个交易日，取"截至该日的最近5个交易日"求均值
+    const days = [];
+    for (let i = 4; i < brentVals.length; i++) {
+      const window = brentVals.slice(i - 4, i + 1); // 5 个值
+      const ma5Brent = +avg(window).toFixed(2);
+      const oman  = +(ma5Brent + OMAN_BASIS).toFixed(2);   // 阿曼≈布伦特-8.5
+      const minas = +(oman + MINAS_BASIS).toFixed(2);      // 米纳斯≈阿曼-3.2
+      // 发改委一揽子测算均价 = 布伦特×40% + 阿曼×30% + 米纳斯×30%
+      const basketAvg = +((ma5Brent * 4 + oman * 3 + minas * 3) / 10).toFixed(2);
+      // WTI 滚动均价
+      const wtiWindow = dates.slice(i - 4, i + 1).map(d => wtiMap.get(d) ?? brentMap.get(d)! - 3);
+      const ma5Wti = +avg(wtiWindow).toFixed(2);
+      days.push({
+        date: dates[i],
+        brent: brentVals[i],
+        wti: wtiMap.get(dates[i]) ?? +(brentVals[i] - 3).toFixed(2),
+        ma5Brent, ma5Wti, basketAvg,
+      });
+    }
 
-    const avgBrent = +avg(days.map(d => d.brent)).toFixed(2);
-    const avgWti   = +avg(days.map(d => d.wti)).toFixed(2);
-    const avgOman  = +avg(days.map(d => d.oman)).toFixed(2);
-    const avgMinas = +avg(days.map(d => d.minas)).toFixed(2);
+    if (days.length === 0) throw new Error("交易日数据不足，无法计算滚动均价");
+    const latest = days[days.length - 1];
 
     const integKey = Deno.env.get("INTEGRATIONS_API_KEY") ?? "";
     const rmbRate = await fetchRmbRate(integKey);
     const toPerLiter = (usd: number) => +((usd * rmbRate) / LITERS_PER_BARREL).toFixed(2);
 
-    const cur = days[days.length - 1];
-    const dev = (curVal: number, avgVal: number) => +(((curVal - avgVal) / avgVal) * 100).toFixed(2);
-
     const data = {
       days,
-      avgBrent, avgWti, avgOman, avgMinas,
-      perLiterBrent: toPerLiter(avgBrent),
-      perLiterWti:   toPerLiter(avgWti),
-      perLiterOman:  toPerLiter(avgOman),
-      perLiterMinas: toPerLiter(avgMinas),
-      devBrent: dev(cur.brent, avgBrent),
-      devWti:   dev(cur.wti, avgWti),
-      devOman:  dev(cur.oman, avgOman),
-      devMinas: dev(cur.minas, avgMinas),
+      latestBrent: latest.brent,
+      latestMa5: latest.ma5Brent,
+      latestBasket: latest.basketAvg,
+      perLiterBasket: toPerLiter(latest.basketAvg),
       rmbRate,
       actualDays: days.length,
       updatedAt: new Date().toISOString(),
       source: "fred",
     };
 
-    console.log(`[crude-5d] ✅ ${days.length}天 布伦特均价=$${avgBrent} WTI=$${avgWti} 阿曼=$${avgOman} 米纳斯=$${avgMinas}`);
+    console.log(`[crude-5d] ✅ ${days.length}个滚动MA5 最新: 布伦特=$${latest.brent} MA5=$${latest.ma5Brent} 一揽子测算=$${latest.basketAvg}`);
     return new Response(JSON.stringify({ status: 0, data }), { status: 200, headers });
   } catch (e) {
     console.error(`[crude-5d] 失败: ${e}`);
