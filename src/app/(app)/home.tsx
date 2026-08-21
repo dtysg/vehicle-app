@@ -1807,6 +1807,8 @@ export default function HomePage() {
   const [crudeLoading, setCrudeLoading] = useState(false);
   const [oilLoading, setOilLoading] = useState(false);
   const [oilRefreshing, setOilRefreshing] = useState(false); // 手动刷新旋转状态
+  // 本地持久化：记住用户上次选择的城市，下次打开自动加载（无记录则默认天津）
+  const OIL_CITY_KEY = 'oil_selected_city';
   const [oilCity, setOilCity] = useState('天津');
   const [oilCityModalVisible, setOilCityModalVisible] = useState(false);
   // 历史调价折线图
@@ -2272,11 +2274,21 @@ export default function HomePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crudeForceLoading]);
 
-  // ── 首次加载时静默获取原油价格（先读 DB，再调 EF，让防御检查有 lastAdjustDate 可用）──
+  // ── 首次加载：读取本地保存的城市（无则默认天津），再静默获取油价 + 原油 ──
   React.useEffect(() => {
-    fetchOilPrice(oilCityRef.current).then(() => {
-      handleFetchCrudePrice(false);
-    });
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem(OIL_CITY_KEY);
+        const initial = saved && OIL_CITIES.includes(saved) ? saved : '天津';
+        oilCityRef.current = initial;
+        setOilCity(initial);
+        await fetchOilPrice(initial);
+      } catch (_) {
+        await fetchOilPrice(oilCityRef.current);
+      } finally {
+        handleFetchCrudePrice(false);
+      }
+    })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -3948,6 +3960,7 @@ export default function HomePage() {
                         setOilCityModalVisible(false);
                         oilCityRef.current = city; // 先同步 ref，再 fetch
                         setOilCity(city);
+                        AsyncStorage.setItem(OIL_CITY_KEY, city).catch(() => {}); // 本地持久化
                         setOilHistory([]); // 切换城市清空历史缓存
                         setOilHistoryExpanded(false);
                         fetchOilPrice(city);
