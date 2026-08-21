@@ -4636,18 +4636,18 @@ export default function HomePage() {
         <Animated.View entering={FadeInDown.delay(180).duration(260)} style={{ flexDirection: 'column', gap: 8, marginBottom: 6, alignItems: 'stretch' }}>
 
           {/* ── 天气卡 ── */}
-          <View style={{ flex: 1, position: 'relative' }}>
+          <View style={{ position: 'relative' }}>
           <Pressable
             onLongPress={() => setFxPickerVisible(true)}
             onPress={() => {}}
             delayLongPress={600}
-            style={{ flex: 1, borderRadius: 20, overflow: 'hidden',
+            style={{ borderRadius: 20, overflow: 'hidden',
               borderWidth: 1, borderColor: fxPreview ? 'rgba(167,139,250,0.55)' : 'rgba(96,165,250,0.28)' }}
           >
             <LinearGradient
               colors={['rgba(25,65,180,0.72)', 'rgba(10,30,100,0.82)', 'rgba(4,12,50,0.92)']}
               start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-              style={{ flex: 1, paddingHorizontal: 13, paddingTop: 12, paddingBottom: 12, gap: 9 }}
+              style={{ paddingHorizontal: 13, paddingTop: 12, paddingBottom: 12, gap: 9 }}
             >
               {/* 顶部：城市 + 刷新 */}
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -4822,7 +4822,7 @@ export default function HomePage() {
 
           {/* ── 油价卡 ── */}
           {(oilLoading || oilPrice) ? (
-            <View style={{ flex: 1, borderRadius: 20, overflow: 'hidden',
+            <View style={{ borderRadius: 20, overflow: 'hidden',
               borderWidth: 1, borderColor: 'rgba(251,191,36,0.32)' }}>
               <LinearGradient
                 colors={['rgba(130,85,8,0.68)', 'rgba(72,46,4,0.80)', 'rgba(28,16,2,0.90)']}
