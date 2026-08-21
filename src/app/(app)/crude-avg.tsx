@@ -18,6 +18,8 @@ interface DayPoint {
 }
 interface Crude5dData {
   days: DayPoint[];
+  startDate: string;
+  targetCount: number;
   latestBrent: number;
   latestMa5: number;
   latestBasket: number;
@@ -147,11 +149,18 @@ export default function CrudeAvgPage() {
         ) : (
           <>
             {/* 说明 */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12, paddingHorizontal: 2 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8, paddingHorizontal: 2 }}>
               <TrendingUp size={13} color="rgba(251,191,36,0.7)" />
-              <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, lineHeight: 16 }}>
-                滚动均价 = 截至该交易日的最近 5 个交易日均价，逐日滚动计算，共给出连续 {data.actualDays} 天的具体数值。
+              <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, lineHeight: 16, flex: 1 }}>
+                从 {data.startDate.slice(5)} 起统计 {data.targetCount} 个工作日（周末/节假日不计），每个工作日给出截至该日的最近 5 个交易日滚动均价。
               </Text>
+            </View>
+            {/* 进度 */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, paddingHorizontal: 2 }}>
+              <View style={{ flex: 1, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+                <View style={{ width: `${Math.round((data.actualDays / data.targetCount) * 100)}%`, height: 6, borderRadius: 3, backgroundColor: '#FBBF24' }} />
+              </View>
+              <Text style={{ color: '#FBBF24', fontSize: 11, fontWeight: '800' }}>已统计 {data.actualDays}/{data.targetCount}</Text>
             </View>
 
             {/* 最新值汇总 */}

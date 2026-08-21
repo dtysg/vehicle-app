@@ -29,9 +29,40 @@ const EXCHANGE_RATE_URL = "https://app-dpzi13kxv2m9-api-ELbWz8OmBW5Y-gateway.app
 const OMAN_BASIS = -8.5;   // 阿曼/迪拜 相对 Brent 的现货利差
 const MINAS_BASIS = -3.2;  // 米纳斯 相对 阿曼 的现货利差
 
+// 统计起点：从 2026-08-17 起统计 10 个工作日（周末/节假日不计）
+const START_DATE = "2026-08-17";
+const TARGET_WORKDAYS = 10;
+
+// 2026 中国法定节假日（调休后的休假日，不含调休上班的周末）
+const HOLIDAYS_2026 = new Set([
+  "2026-01-01", "2026-01-02", "2026-01-03",
+  "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20", "2026-02-21", "2026-02-22",
+  "2026-04-04", "2026-04-05", "2026-04-06",
+  "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05",
+  "2026-06-19", "2026-06-20", "2026-06-21",
+  "2026-09-25", "2026-09-26", "2026-09-27",
+  "2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-06", "2026-10-07",
+]);
+
+// 从 START_DATE 起向前生成 TARGET_WORKDAYS 个工作日（YYYY-MM-DD 升序）
+function buildTargetWorkdays(): string[] {
+  const result: string[] = [];
+  const cursor = new Date(START_DATE + "T00:00:00Z");
+  let guard = 0;
+  while (result.length < TARGET_WORKDAYS && guard < 120) {
+    const ds = cursor.toISOString().slice(0, 10);
+    if (isWorkday(ds)) result.push(ds);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    guard++;
+  }
+  return result;
+}
+
+// 判断某日（YYYY-MM-DD）是否为工作日：排除周末与节假日
 function isWorkday(ds: string): boolean {
   const d = new Date(ds + "T12:00:00Z").getUTCDay();
-  return d !== 0 && d !== 6;
+  if (d === 0 || d === 6) return false; // 周末
+  return !HOLIDAYS_2026.has(ds); // 节假日
 }
 
 async function fetchFredSeries(seriesId: string, startDate: string): Promise<Array<{ period: string; val: number }>> {
@@ -81,12 +112,13 @@ serve(async (req) => {
   const headers = { "Content-Type": "application/json", ...CORS };
 
   try {
-    // 取近 15 个自然日，保证有足够交易日（需~9个交易日才能算出连续5个MA5）
-    const startDate = new Date(Date.now() - 15 * 86400_000).toISOString().slice(0, 10);
+    // 从 START_DATE(2026-08-17) 起统计 10 个工作日；为计算滚动均价需取更早历史
+    const targets = buildTargetWorkdays();
+    const fetchStart = new Date(new Date(START_DATE).getTime() - 30 * 86400_000).toISOString().slice(0, 10);
 
     const [brentRes, wtiRes] = await Promise.allSettled([
-      fetchFredSeries("DCOILBRENTEU", startDate),
-      fetchFredSeries("DCOILWTICO", startDate),
+      fetchFredSeries("DCOILBRENTEU", fetchStart),
+      fetchFredSeries("DCOILWTICO", fetchStart),
     ]);
 
     const brentRows = brentRes.status === "fulfilled" ? brentRes.value : [];
@@ -95,31 +127,26 @@ serve(async (req) => {
 
     const brentMap = new Map(brentRows.map(r => [r.period, r.val]));
     const wtiMap   = new Map(wtiRows.map(r => [r.period, r.val]));
-    // 取最近 9 个有数据的工作日（升序），用于计算连续 5 个滚动 MA5
-    const dates = [...brentMap.keys()].sort().slice(-9);
-    const brentVals = dates.map(d => brentMap.get(d)!);
+    const allBrentDates = [...brentMap.keys()].sort();
 
-    // 滚动 5 日均价：对每个交易日，取"截至该日的最近5个交易日"求均值
+    // 逐个工作日计算滚动 5 日均价：取"截至该工作日的最近5个交易日"求均值
+    // 仅纳入已有数据的工作日，数据不足或暂无数据的工作日等"有了再加进去"
     const days = [];
-    for (let i = 4; i < brentVals.length; i++) {
-      const window = brentVals.slice(i - 4, i + 1); // 5 个值
-      const ma5Brent = +avg(window).toFixed(2);
-      const oman  = +(ma5Brent + OMAN_BASIS).toFixed(2);   // 阿曼≈布伦特-8.5
-      const minas = +(oman + MINAS_BASIS).toFixed(2);      // 米纳斯≈阿曼-3.2
-      // 发改委一揽子测算均价 = 布伦特×40% + 阿曼×30% + 米纳斯×30%
+    for (const t of targets) {
+      if (!brentMap.has(t)) continue; // 该工作日暂无数据，等有了再加
+      const prior = allBrentDates.filter(d => d <= t).slice(-5);
+      if (prior.length < 5) continue;
+      const brentSpot = brentMap.get(t)!;
+      const wtiSpot   = wtiMap.get(t) ?? +(brentSpot - 3).toFixed(2);
+      const ma5Brent  = +avg(prior.map(d => brentMap.get(d)!)).toFixed(2);
+      const ma5Wti    = +avg(prior.map(d => wtiMap.get(d) ?? brentMap.get(d)! - 3)).toFixed(2);
+      const oman  = +(ma5Brent + OMAN_BASIS).toFixed(2);
+      const minas = +(oman + MINAS_BASIS).toFixed(2);
       const basketAvg = +((ma5Brent * 4 + oman * 3 + minas * 3) / 10).toFixed(2);
-      // WTI 滚动均价
-      const wtiWindow = dates.slice(i - 4, i + 1).map(d => wtiMap.get(d) ?? brentMap.get(d)! - 3);
-      const ma5Wti = +avg(wtiWindow).toFixed(2);
-      days.push({
-        date: dates[i],
-        brent: brentVals[i],
-        wti: wtiMap.get(dates[i]) ?? +(brentVals[i] - 3).toFixed(2),
-        ma5Brent, ma5Wti, basketAvg,
-      });
+      days.push({ date: t, brent: brentSpot, wti: wtiSpot, ma5Brent, ma5Wti, basketAvg });
     }
 
-    if (days.length === 0) throw new Error("交易日数据不足，无法计算滚动均价");
+    if (days.length === 0) throw new Error("工作日数据不足，无法计算滚动均价");
     const latest = days[days.length - 1];
 
     const integKey = Deno.env.get("INTEGRATIONS_API_KEY") ?? "";
@@ -128,6 +155,8 @@ serve(async (req) => {
 
     const data = {
       days,
+      startDate: START_DATE,
+      targetCount: TARGET_WORKDAYS,
       latestBrent: latest.brent,
       latestMa5: latest.ma5Brent,
       latestBasket: latest.basketAvg,
@@ -138,7 +167,7 @@ serve(async (req) => {
       source: "fred",
     };
 
-    console.log(`[crude-5d] ✅ ${days.length}个滚动MA5 最新: 布伦特=$${latest.brent} MA5=$${latest.ma5Brent} 一揽子测算=$${latest.basketAvg}`);
+    console.log(`[crude-5d] ✅ 已统计 ${days.length}/${TARGET_WORKDAYS} 个工作日(起点${START_DATE}) 最新: 布伦特=$${latest.brent} MA5=$${latest.ma5Brent} 一揽子测算=$${latest.basketAvg}`);
     return new Response(JSON.stringify({ status: 0, data }), { status: 200, headers });
   } catch (e) {
     console.error(`[crude-5d] 失败: ${e}`);

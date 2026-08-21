@@ -227,8 +227,8 @@ importers:
         specifier: ^1.11.0
         version: 1.25.0(react-native-svg@15.15.3(react-native@0.83.2(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.2.0))(react@19.2.0))(react-native@0.83.2(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.2.0))(react@19.2.0)
       miaoda-expo-devkit:
-        specifier: 0.1.1-beta.97
-        version: 0.1.1-beta.97(2f83e40e431138962a5a173c0d7b1743)
+        specifier: 0.1.1-beta.99
+        version: 0.1.1-beta.99(2f83e40e431138962a5a173c0d7b1743)
       nativewind:
         specifier: ^4.2.3
         version: 4.2.6(react-native-reanimated@4.2.1(react-native-worklets@0.7.2(@babel/core@7.29.7)(react-native@0.83.2(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.2.0))(react@19.2.0))(react-native@0.83.2(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.2.0))(react@19.2.0))(react-native-safe-area-context@5.6.2(react-native@0.83.2(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.2.0))(react@19.2.0))(react-native-svg@15.15.3(react-native@0.83.2(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.2.0))(react@19.2.0))(react-native@0.83.2(@babel/core@7.29.7)(@types/react@19.2.17)(react@19.2.0))(react@19.2.0)(tailwindcss@3.4.19(yaml@2.9.0))
@@ -5044,8 +5044,8 @@ packages:
     engines: {node: '>=20.19.4'}
     hasBin: true
 
-  miaoda-expo-devkit@0.1.1-beta.97:
-    resolution: {integrity: sha512-H8la8STnkWCC98cu/UrySQDR5HDm3LjIlQZVK1dk/E4itzyGdIj+JU1NE47jOn1jtgZ1SGwP0xb85sBHgm9HoA==}
+  miaoda-expo-devkit@0.1.1-beta.99:
+    resolution: {integrity: sha512-0ZVtchgSeB9YzHEeVTfpNLvghW6Qnqvs6tV9/UsXV0Ph797TSQl07hDuDDg3SF6xO6IVevBox3zURq01AlSSBA==}
     hasBin: true
     peerDependencies:
       '@expo/config-plugins': '>=55.0.0'
@@ -12273,7 +12273,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  miaoda-expo-devkit@0.1.1-beta.97(2f83e40e431138962a5a173c0d7b1743):
+  miaoda-expo-devkit@0.1.1-beta.99(2f83e40e431138962a5a173c0d7b1743):
     dependencies:
       '@expo/config-plugins': 55.0.11
       '@zumer/snapdom': 2.23.1

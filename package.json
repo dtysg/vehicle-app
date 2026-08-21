@@ -73,7 +73,7 @@
     "expo-video": "catalog:",
     "expo-web-browser": "~55.0.18",
     "lucide-react-native": "^1.11.0",
-    "miaoda-expo-devkit": "0.1.1-beta.97",
+    "miaoda-expo-devkit": "0.1.1-beta.99",
     "nativewind": "^4.2.3",
     "react": "19.2.0",
     "react-dom": "19.2.0",
