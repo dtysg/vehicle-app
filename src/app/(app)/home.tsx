@@ -39,7 +39,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
-import { Camera, Search, X, Car, ChevronRight, Plus, Trash2, ArrowRightLeft, LogOut, Users, FileUp, ShieldCheck, ShieldHalf, User, Clock, HardDriveDownload, ChevronDown, ChevronUp, MessageCircle, ClipboardList, Flame, Droplets, Wind, AlertTriangle, RefreshCw, Crown, Fuel, Timer, Bell, MapPin, CalendarDays, Gauge, TrendingUp, FlaskConical, Zap, Trophy, Tv, Settings2, PackageOpen, ListChecks, Hammer } from 'lucide-react-native';
+import { Camera, Search, X, Car, ChevronRight, Plus, Trash2, ArrowRightLeft, LogOut, Users, FileUp, ShieldCheck, ShieldHalf, User, Clock, HardDriveDownload, ChevronDown, ChevronUp, MessageCircle, ClipboardList, Flame, Droplets, Wind, AlertTriangle, RefreshCw, Crown, Fuel, Timer, Bell, MapPin, CalendarDays, Gauge, TrendingUp, FlaskConical, Zap, Trophy, Tv, Settings2, PackageOpen, ListChecks, Hammer, BarChart3 } from 'lucide-react-native';
 import DateTimePicker from 'react-native-ui-datepicker';
 import { supabase } from '@/client/supabase';
 import { useSession } from '@/ctx';
@@ -5530,7 +5530,19 @@ export default function HomePage() {
                       ? <ChevronDown size={13} color="rgba(251,146,60,0.55)" />
                       : <ChevronUp   size={13} color="rgba(251,146,60,0.55)" />}
                   </View>
-                  {/* 刷新按钮（已整合到卡内）*/}
+                  {/* 右侧：5天均价入口 + 刷新按钮 */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Pressable
+                    onPress={() => router.push('/(app)/crude-avg' as never)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4,
+                      backgroundColor: 'rgba(251,191,36,0.14)',
+                      borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3,
+                      borderWidth: 1, borderColor: 'rgba(251,191,36,0.40)' }}
+                  >
+                    <BarChart3 size={9} color="#FB923C" />
+                    <Text style={{ color: '#FB923C', fontSize: 9, fontWeight: '700' }}>5天均价</Text>
+                  </Pressable>
                   <Pressable
                     onPress={() => handleFetchCrudePrice(true)}
                     disabled={crudeForceLoading}
@@ -5547,6 +5559,7 @@ export default function HomePage() {
                       {crudeForceLoading ? '获取中…' : '刷新'}
                     </Text>
                   </Pressable>
+                  </View>
                 </Pressable>
 
                 {/* ── 无数据时：占位提示 + 大刷新按钮（折叠时隐藏）── */}
